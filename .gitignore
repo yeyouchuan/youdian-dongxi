@@ -1,0 +1,77 @@
+# Learn more https://docs.github.com/en/get-started/getting-started-with-git/ignoring-files
+
+# dependencies
+node_modules/
+
+# Expo
+.expo/
+dist/
+web-build/
+expo-env.d.ts
+
+# Native
+.kotlin/
+*.orig.*
+*.jks
+*.p8
+*.p12
+*.key
+*.mobileprovision
+
+# Metro
+.metro-health-check*
+
+# debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+expo-web.*.log
+
+# tests and coverage (kept local, not published)
+**/__tests__/
+**/__mocks__/
+*.test.*
+*.spec.*
+/jest.setup.*
+/coverage/
+/.nyc_output/
+
+# AI assistant instructions and workspace state (kept local, not published)
+/.agents/
+/.claude/
+/.codex/
+/.cursor/
+/.gemini/
+/.roo/
+/.windsurf/
+/.aider*
+/AGENTS.md
+/CLAUDE.md
+/GEMINI.md
+/.github/copilot-instructions.md
+/.github/instructions/
+/.github/prompts/
+*.prompt.md
+
+# local visual QA evidence
+/.playwright-mcp/
+/apple-health-reference.png
+/design-*.png
+/design-qa.md
+/settings-*.png
+/assets/images/icon-brand.png
+/assets/images/splash-brand.png
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# generated native folders
+/ios
+/android

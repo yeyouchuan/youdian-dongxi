@@ -1,0 +1,69 @@
+{
+  "expo": {
+    "name": "有垫东西",
+    "slug": "youdian-dongxi",
+    "owner": "lahuse",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/icon-brand-light.png",
+    "scheme": "youdiandongxi",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": false,
+      "bundleIdentifier": "com.yeyou.youdiandongxi",
+      "buildNumber": "1",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "web": {
+      "output": "static",
+      "favicon": "./assets/images/icon-brand-light.png"
+    },
+    "plugins": [
+      "expo-router",
+      [
+        "expo-splash-screen",
+        {
+          "backgroundColor": "#F2F2F7",
+          "image": "./assets/images/splash-brand-light.png",
+          "imageWidth": 180,
+          "resizeMode": "contain"
+        }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "ios": {
+            "deploymentTarget": "17.0"
+          }
+        }
+      ],
+      [
+        "expo-sqlite",
+        {
+          "useSQLCipher": true
+        }
+      ],
+      "expo-secure-store",
+      [
+        "@kingstinct/react-native-healthkit",
+        {
+          "NSHealthShareUsageDescription": "有垫东西会在你主动连接后读取心率、HRV、呼吸、体重及你选择的敏感健康记录，用于生成仅保存在设备上的健康参考。",
+          "NSHealthUpdateUsageDescription": "有垫东西仅在你主动授权后读取健康数据，不会向 Apple 健康写入或修改任何记录。",
+          "background": false
+        }
+      ]
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "eebd9ad8-7776-4f4e-9eae-37d77ed1e53e"
+      }
+    }
+  }
+}
