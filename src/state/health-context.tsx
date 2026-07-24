@@ -16,7 +16,6 @@ import {
   CORE_HEALTH_TYPES,
   HEALTH_TYPES,
   HealthTypeIdentifier,
-  summarizeHealthSyncError,
 } from '@/services/apple-health-adapter';
 import { healthDataService } from '@/services/health-data-service';
 
@@ -44,6 +43,7 @@ interface HealthContextValue {
   lastError?: string;
   connect: () => Promise<void>;
   sync: () => Promise<void>;
+  refreshHrv: () => Promise<void>;
   disconnect: () => Promise<void>;
   clearCache: () => Promise<void>;
   setSensitive: (
@@ -61,6 +61,7 @@ function asBoolean(value: string | null) {
 
 export function HealthProvider({ children }: PropsWithChildren) {
   const hasStartedSync = useRef(false);
+  const hrvRefreshPromise = useRef<Promise<void> | null>(null);
   const [status, setStatus] = useState<HealthConnectionStatus>('loading');
   const [available, setAvailable] = useState(false);
   const [samples, setSamples] = useState<HealthKitSample[]>([]);
@@ -162,7 +163,7 @@ export function HealthProvider({ children }: PropsWithChildren) {
           failures += 1;
           const errorCode = classifyHealthSyncError(error);
           console.warn(
-            `[health-sync] ${typeIdentifier} ${errorCode}: ${summarizeHealthSyncError(error)}`,
+            `[health-sync] ${typeIdentifier} ${errorCode}`,
           );
           await healthSampleRepository.recordSyncError(
             typeIdentifier,
@@ -182,7 +183,7 @@ export function HealthProvider({ children }: PropsWithChildren) {
     } catch (error) {
       const errorCode = classifyHealthSyncError(error);
       console.warn(
-        `[health-sync] authorization ${errorCode}: ${summarizeHealthSyncError(error)}`,
+        `[health-sync] authorization ${errorCode}`,
       );
       setLastError(
         errorCode === 'AUTHORIZATION_REQUIRED'
@@ -213,6 +214,39 @@ export function HealthProvider({ children }: PropsWithChildren) {
       setStatus('error');
     }
   }, [available, sync]);
+
+  const refreshHrv = useCallback(async () => {
+    if (!available || status === 'disconnected' || status === 'unavailable') {
+      return;
+    }
+    if (hrvRefreshPromise.current) return hrvRefreshPromise.current;
+    const previous = syncStates.find(
+      (state) => state.typeIdentifier === HEALTH_TYPES.hrv,
+    );
+    const operation = (async () => {
+      try {
+        const batch = await healthDataService.appleHealth.syncType(
+          HEALTH_TYPES.hrv,
+          previous,
+        );
+        await healthSampleRepository.applySyncBatch(batch);
+        await reload();
+      } catch (error) {
+        const errorCode = classifyHealthSyncError(error);
+        console.warn(
+          `[health-sync] ${HEALTH_TYPES.hrv} ${errorCode}`,
+        );
+        await healthSampleRepository.recordSyncError(
+          HEALTH_TYPES.hrv,
+          errorCode,
+        );
+      } finally {
+        hrvRefreshPromise.current = null;
+      }
+    })();
+    hrvRefreshPromise.current = operation;
+    return operation;
+  }, [available, reload, status, syncStates]);
 
   const setSensitive = useCallback(
     async (
@@ -257,6 +291,7 @@ export function HealthProvider({ children }: PropsWithChildren) {
       lastError,
       connect,
       sync,
+      refreshHrv,
       disconnect,
       clearCache,
       setSensitive,
@@ -268,6 +303,7 @@ export function HealthProvider({ children }: PropsWithChildren) {
       connect,
       disconnect,
       lastError,
+      refreshHrv,
       samples,
       sensitive,
       setSensitive,

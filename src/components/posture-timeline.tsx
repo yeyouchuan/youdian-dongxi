@@ -4,16 +4,15 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import {
   POSTURE_COLORS,
   POSTURE_LABELS,
+  POSTURE_ORDER,
 } from '@/domain/report';
-import { PostureSegment, PostureState } from '@/domain/types';
+import { PostureSegment } from '@/domain/types';
 
 interface PostureTimelineProps {
   segments: PostureSegment[];
   axisStart: number;
   axisEnd: number;
 }
-
-const LEGEND_ORDER: PostureState[] = ['upright', 'legsCrossed', 'away'];
 
 function timeLabel(minutes: number) {
   const hours = Math.floor(minutes / 60);
@@ -27,32 +26,43 @@ export function PostureTimeline({
   axisEnd,
 }: PostureTimelineProps) {
   const total = axisEnd - axisStart;
+  const axisLabels = Array.from({ length: 4 }, (_, index) =>
+    Math.round(axisStart + (total * index) / 3),
+  );
   return (
     <View style={styles.wrap}>
       <View style={styles.track}>
-        {segments.map((segment, index) => (
+        {segments.map((segment) => (
           <View
-            key={`${segment.startMinute}-${segment.endMinute}`}
-            accessibilityLabel={`${POSTURE_LABELS[segment.posture]} ${segment.endMinute - segment.startMinute}分钟`}
+            key={`${segment.startMinute}-${segment.endMinute}-${segment.posture}`}
+            accessibilityLabel={`${POSTURE_LABELS[segment.posture]} ${Math.max(
+              1,
+              Math.round(segment.endMinute - segment.startMinute),
+            )}分钟`}
             style={{
-              flexBasis: `${((segment.endMinute - segment.startMinute) / total) * 100}%`,
-              flexGrow: 0,
-              flexShrink: 0,
+              position: 'absolute',
+              left: `${((segment.startMinute - axisStart) / total) * 100}%`,
+              width: `${((segment.endMinute - segment.startMinute) / total) * 100}%`,
+              top: 0,
+              bottom: 0,
               backgroundColor: POSTURE_COLORS[segment.posture],
-              borderLeftWidth: index === 0 ? 0 : 2,
+              borderLeftWidth: 1,
+              borderRightWidth: 1,
               borderLeftColor: Palette.surface,
+              borderRightColor: Palette.surface,
             }}
           />
         ))}
       </View>
       <View style={styles.axis}>
-        <Text style={styles.axisText}>{timeLabel(axisStart)}</Text>
-        <Text style={styles.axisText}>12:00</Text>
-        <Text style={styles.axisText}>15:00</Text>
-        <Text style={styles.axisText}>{timeLabel(axisEnd)}</Text>
+        {axisLabels.map((minute) => (
+          <Text key={minute} style={styles.axisText}>
+            {timeLabel(minute)}
+          </Text>
+        ))}
       </View>
       <View style={styles.legend}>
-        {LEGEND_ORDER.map((posture) => (
+        {POSTURE_ORDER.map((posture) => (
           <View key={posture} style={styles.legendItem}>
             <View
               style={[styles.legendDot, { backgroundColor: POSTURE_COLORS[posture] }]}
@@ -73,7 +83,7 @@ const styles = StyleSheet.create({
     height: 68,
     borderRadius: Radius.md,
     overflow: 'hidden',
-    flexDirection: 'row',
+    position: 'relative',
     backgroundColor: Palette.surfaceMuted,
   },
   axis: {

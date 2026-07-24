@@ -5,6 +5,12 @@ import {
   openDatabaseWithRecovery,
   withKeyedTransaction,
 } from '@/data/database-recovery';
+import {
+  PhysiologyWindowSummary,
+  PressureFeatureSummary,
+  RealtimePostureSegment,
+  RecoveryAssessment,
+} from '@/domain/realtime-types';
 import { HealthKitSample, HealthKitSyncState, HealthSyncBatch } from '@/domain/types';
 import { buildCommittedSyncSnapshot } from '@/data/sync-merge';
 
@@ -41,6 +47,46 @@ const DATABASE_SCHEMA = `
     key TEXT PRIMARY KEY NOT NULL,
     value TEXT NOT NULL
   );
+  CREATE TABLE IF NOT EXISTS physiology_windows (
+    id TEXT PRIMARY KEY NOT NULL,
+    device_id TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    heart_rate_median REAL,
+    respiratory_rate_median REAL,
+    heart_rate_coverage REAL NOT NULL,
+    respiratory_rate_coverage REAL NOT NULL,
+    heart_rate_stable INTEGER NOT NULL,
+    heart_rate_quality REAL,
+    respiratory_rate_quality REAL
+  );
+  CREATE INDEX IF NOT EXISTS physiology_windows_end_at
+    ON physiology_windows(end_at);
+  CREATE TABLE IF NOT EXISTS recovery_assessments (
+    id TEXT PRIMARY KEY NOT NULL,
+    state TEXT NOT NULL,
+    measured_at TEXT,
+    created_at TEXT NOT NULL,
+    assessment_json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS recovery_assessments_created_at
+    ON recovery_assessments(created_at);
+  CREATE TABLE IF NOT EXISTS pressure_features (
+    id TEXT PRIMARY KEY NOT NULL,
+    captured_at TEXT NOT NULL,
+    feature_json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS pressure_features_captured_at
+    ON pressure_features(captured_at);
+  CREATE TABLE IF NOT EXISTS realtime_posture_segments (
+    id TEXT PRIMARY KEY NOT NULL,
+    start_at TEXT NOT NULL,
+    end_at TEXT NOT NULL,
+    segment_json TEXT NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS realtime_posture_segments_end_at
+    ON realtime_posture_segments(end_at);
 `;
 
 interface HealthSampleRow {
@@ -59,6 +105,17 @@ interface HealthSampleRow {
   imported_at: string;
 }
 
+export function normalizeRealtimePostureSegment(
+  segment: RealtimePostureSegment | (Omit<RealtimePostureSegment, 'posture'> & {
+    posture: string;
+  }),
+): RealtimePostureSegment {
+  return {
+    ...segment,
+    posture: segment.posture === 'legsCrossed' ? 'other' : segment.posture,
+  } as RealtimePostureSegment;
+}
+
 interface SyncStateRow {
   type_identifier: string;
   anchor: string | null;
@@ -70,6 +127,10 @@ interface SyncStateRow {
 
 let databasePromise: Promise<SQLiteDatabase> | null = null;
 let webSamples: HealthKitSample[] = [];
+let webPhysiologyWindows: PhysiologyWindowSummary[] = [];
+let webRecoveryAssessments: RecoveryAssessment[] = [];
+let webPressureFeatures: PressureFeatureSummary[] = [];
+let webRealtimePostureSegments: RealtimePostureSegment[] = [];
 const webSyncStates = new Map<string, HealthKitSyncState>();
 const webSettings = new Map<string, string>();
 
@@ -205,6 +266,70 @@ function sampleBindings(sample: HealthKitSample) {
   ] as const;
 }
 
+function physiologyWindowBindings(window: PhysiologyWindowSummary) {
+  return [
+    window.id,
+    window.deviceId,
+    window.sessionId,
+    window.startAt,
+    window.endAt,
+    window.heartRateMedian,
+    window.respiratoryRateMedian,
+    window.heartRateCoverage,
+    window.respiratoryRateCoverage,
+    window.heartRateStable ? 1 : 0,
+    window.heartRateQuality,
+    window.respiratoryRateQuality,
+  ] as const;
+}
+
+function rowToPhysiologyWindow(
+  row: Record<string, string | number | null>,
+): PhysiologyWindowSummary {
+  return {
+    id: row.id as string,
+    deviceId: row.device_id as string,
+    sessionId: row.session_id as string,
+    startAt: row.start_at as string,
+    endAt: row.end_at as string,
+    heartRateMedian: row.heart_rate_median as number | null,
+    respiratoryRateMedian: row.respiratory_rate_median as number | null,
+    heartRateCoverage: row.heart_rate_coverage as number,
+    respiratoryRateCoverage: row.respiratory_rate_coverage as number,
+    heartRateStable: row.heart_rate_stable === 1,
+    heartRateQuality: row.heart_rate_quality as number | null,
+    respiratoryRateQuality: row.respiratory_rate_quality as number | null,
+  };
+}
+
+async function pruneRealtimeData(database: SQLiteDatabase, now = new Date()) {
+  const windowsCutoff = new Date(
+    now.getTime() - 30 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const postureCutoff = new Date(
+    now.getTime() - 90 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  const assessmentsCutoff = new Date(
+    now.getTime() - 90 * 24 * 60 * 60 * 1000,
+  ).toISOString();
+  await database.runAsync(
+    'DELETE FROM physiology_windows WHERE end_at < ?',
+    windowsCutoff,
+  );
+  await database.runAsync(
+    'DELETE FROM pressure_features WHERE captured_at < ?',
+    windowsCutoff,
+  );
+  await database.runAsync(
+    'DELETE FROM realtime_posture_segments WHERE end_at < ?',
+    postureCutoff,
+  );
+  await database.runAsync(
+    'DELETE FROM recovery_assessments WHERE created_at < ?',
+    assessmentsCutoff,
+  );
+}
+
 export const healthSampleRepository = {
   async initialize() {
     if (Platform.OS !== 'web') await openNativeDatabase();
@@ -309,13 +434,207 @@ export const healthSampleRepository = {
   async clearHealthCache() {
     if (Platform.OS === 'web') {
       webSamples = [];
+      webPhysiologyWindows = [];
+      webRecoveryAssessments = [];
+      webPressureFeatures = [];
+      webRealtimePostureSegments = [];
       webSyncStates.clear();
       return;
     }
     const database = await openNativeDatabase();
     await withKeyedTransaction(database, async (transaction) => {
-      await transaction.execAsync('DELETE FROM health_samples; DELETE FROM health_sync_state;');
+      await transaction.execAsync(`
+        DELETE FROM health_samples;
+        DELETE FROM health_sync_state;
+        DELETE FROM physiology_windows;
+        DELETE FROM recovery_assessments;
+        DELETE FROM pressure_features;
+        DELETE FROM realtime_posture_segments;
+      `);
     });
+  },
+
+  async savePhysiologyWindow(window: PhysiologyWindowSummary) {
+    if (Platform.OS === 'web') {
+      webPhysiologyWindows = [
+        window,
+        ...webPhysiologyWindows.filter((item) => item.id !== window.id),
+      ].filter(
+        (item) =>
+          Date.parse(item.endAt) >= Date.now() - 30 * 24 * 60 * 60 * 1000,
+      );
+      return;
+    }
+    const database = await openNativeDatabase();
+    await database.runAsync(
+      `INSERT INTO physiology_windows (
+        id, device_id, session_id, start_at, end_at, heart_rate_median,
+        respiratory_rate_median, heart_rate_coverage,
+        respiratory_rate_coverage, heart_rate_stable, heart_rate_quality,
+        respiratory_rate_quality
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        end_at = excluded.end_at,
+        heart_rate_median = excluded.heart_rate_median,
+        respiratory_rate_median = excluded.respiratory_rate_median,
+        heart_rate_coverage = excluded.heart_rate_coverage,
+        respiratory_rate_coverage = excluded.respiratory_rate_coverage,
+        heart_rate_stable = excluded.heart_rate_stable,
+        heart_rate_quality = excluded.heart_rate_quality,
+        respiratory_rate_quality = excluded.respiratory_rate_quality`,
+      ...physiologyWindowBindings(window),
+    );
+    await pruneRealtimeData(database);
+  },
+
+  async getPhysiologyWindows(): Promise<PhysiologyWindowSummary[]> {
+    if (Platform.OS === 'web') {
+      return [...webPhysiologyWindows].sort((a, b) =>
+        b.endAt.localeCompare(a.endAt),
+      );
+    }
+    const database = await openNativeDatabase();
+    const rows = await database.getAllAsync<
+      Record<string, string | number | null>
+    >('SELECT * FROM physiology_windows ORDER BY end_at DESC');
+    return rows.map(rowToPhysiologyWindow);
+  },
+
+  async saveRecoveryAssessment(assessment: RecoveryAssessment) {
+    if (Platform.OS === 'web') {
+      webRecoveryAssessments = [
+        assessment,
+        ...webRecoveryAssessments.filter(
+          (item) => item.id !== assessment.id,
+        ),
+      ].filter(
+        (item) =>
+          Date.parse(item.createdAt) >=
+          Date.now() - 90 * 24 * 60 * 60 * 1000,
+      );
+      return;
+    }
+    const database = await openNativeDatabase();
+    await database.runAsync(
+      `INSERT INTO recovery_assessments (
+        id, state, measured_at, created_at, assessment_json
+      ) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        state = excluded.state,
+        measured_at = excluded.measured_at,
+        created_at = excluded.created_at,
+        assessment_json = excluded.assessment_json`,
+      assessment.id,
+      assessment.state,
+      assessment.measuredAt ?? null,
+      assessment.createdAt,
+      JSON.stringify(assessment),
+    );
+    await pruneRealtimeData(database);
+  },
+
+  async getRecoveryAssessments(): Promise<RecoveryAssessment[]> {
+    if (Platform.OS === 'web') {
+      return [...webRecoveryAssessments].sort((a, b) =>
+        b.createdAt.localeCompare(a.createdAt),
+      );
+    }
+    const database = await openNativeDatabase();
+    const rows = await database.getAllAsync<{ assessment_json: string }>(
+      'SELECT assessment_json FROM recovery_assessments ORDER BY created_at DESC',
+    );
+    return rows.map(
+      (row) => JSON.parse(row.assessment_json) as RecoveryAssessment,
+    );
+  },
+
+  async savePressureFeature(feature: PressureFeatureSummary) {
+    if (Platform.OS === 'web') {
+      webPressureFeatures = [
+        feature,
+        ...webPressureFeatures.filter((item) => item.id !== feature.id),
+      ].filter(
+        (item) =>
+          Date.parse(item.capturedAt) >=
+          Date.now() - 30 * 24 * 60 * 60 * 1000,
+      );
+      return;
+    }
+    const database = await openNativeDatabase();
+    await database.runAsync(
+      `INSERT INTO pressure_features (
+        id, captured_at, feature_json
+      ) VALUES (?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        captured_at = excluded.captured_at,
+        feature_json = excluded.feature_json`,
+      feature.id,
+      feature.capturedAt,
+      JSON.stringify(feature),
+    );
+    await pruneRealtimeData(database);
+  },
+
+  async getPressureFeatures(): Promise<PressureFeatureSummary[]> {
+    if (Platform.OS === 'web') {
+      return [...webPressureFeatures].sort((a, b) =>
+        b.capturedAt.localeCompare(a.capturedAt),
+      );
+    }
+    const database = await openNativeDatabase();
+    const rows = await database.getAllAsync<{ feature_json: string }>(
+      'SELECT feature_json FROM pressure_features ORDER BY captured_at DESC',
+    );
+    return rows.map(
+      (row) => JSON.parse(row.feature_json) as PressureFeatureSummary,
+    );
+  },
+
+  async saveRealtimePostureSegment(segment: RealtimePostureSegment) {
+    if (Platform.OS === 'web') {
+      webRealtimePostureSegments = [
+        segment,
+        ...webRealtimePostureSegments.filter(
+          (item) => item.id !== segment.id,
+        ),
+      ].filter(
+        (item) =>
+          Date.parse(item.endAt) >=
+          Date.now() - 90 * 24 * 60 * 60 * 1000,
+      );
+      return;
+    }
+    const database = await openNativeDatabase();
+    await database.runAsync(
+      `INSERT INTO realtime_posture_segments (
+        id, start_at, end_at, segment_json
+      ) VALUES (?, ?, ?, ?)
+      ON CONFLICT(id) DO UPDATE SET
+        end_at = excluded.end_at,
+        segment_json = excluded.segment_json`,
+      segment.id,
+      segment.startAt,
+      segment.endAt,
+      JSON.stringify(segment),
+    );
+    await pruneRealtimeData(database);
+  },
+
+  async getRealtimePostureSegments(): Promise<RealtimePostureSegment[]> {
+    if (Platform.OS === 'web') {
+      return [...webRealtimePostureSegments]
+        .map(normalizeRealtimePostureSegment)
+        .sort((a, b) => b.endAt.localeCompare(a.endAt));
+    }
+    const database = await openNativeDatabase();
+    const rows = await database.getAllAsync<{ segment_json: string }>(
+      'SELECT segment_json FROM realtime_posture_segments ORDER BY end_at DESC',
+    );
+    return rows.map((row) =>
+      normalizeRealtimePostureSegment(
+        JSON.parse(row.segment_json) as RealtimePostureSegment,
+      ),
+    );
   },
 
   async getSetting(key: string) {

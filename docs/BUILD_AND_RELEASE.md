@@ -31,9 +31,13 @@ introspect 输出必须包含：
 
 - `com.apple.developer.healthkit: true`
 - `NSHealthShareUsageDescription`
-- 不包含 HealthKit 更新权限文案
+- `NSLocalNetworkUsageDescription`
+- `NSAppTransportSecurity.NSAllowsLocalNetworking: true`
+- production 配置不包含全局 `NSAllowsArbitraryLoads: true`
+- 包含 Apple 二进制校验要求的 `NSHealthUpdateUsageDescription` 透明说明，但授权请求仍不包含 HealthKit `toShare` 类型，当前版本不会写入或修改 Apple 健康数据
 - `expo.sqlite.useSQLCipher: true`
 - `ios.deploymentTarget: 17.0`
+- `expo-notifications` 已生成本地通知配置
 
 ## 3. iPhone 设备注册
 
@@ -92,11 +96,19 @@ npm run start:dev-client
 
 - 新增、删除或升级原生依赖
 - 修改 HealthKit capability、entitlement 或权限文案
+- 修改本地网络权限说明或 ATS 设置
 - 修改 SQLCipher、SecureStore 等 config plugin
 - 修改 Bundle ID、scheme、最低 iOS 版本或 Apple Team
 - 注册新测试设备并更新 provisioning profile
 
-仅修改 TypeScript、样式、文案和演示数据通常不需要重建，重新连接 Metro 即可。
+仅修改 TypeScript、样式和文案通常不需要重建，重新连接 Metro 即可。
+
+本次新增了 `expo-notifications`、`expo-document-picker` 和
+`expo-file-system`，旧 Dev Client 与旧 TestFlight 包均不包含这些原生模块，
+必须重新构建。
+
+本次还新增了 iOS 本地网络用途说明和 ATS 本地网络放行。即使 MQTT.js 本身不含
+原生 TCP 模块，Info.plist 变化也必须重新构建 Dev Client 后才能在真机验证。
 
 ## 7. 真机验收清单
 
@@ -105,19 +117,35 @@ npm run start:dev-client
 - [ ] 日报完整滚动，仪表、时间轴和固定导航无裁切
 - [ ] 首次主动连接时只出现四项核心只读权限
 - [ ] 未授权或无记录时显示明确空状态
+- [ ] 日报与健康页显示相同的真实 Apple Health 数值、来源和测量时间
+- [ ] 体重显示所选日期当日或之前最近一次记录
+- [ ] 没有真实坐垫片段时不生成坐姿评分、洞察或趋势点
+- [ ] 生产界面不出现固定演示日期、演示分数或测试数据入口
+- [ ] iPhone 与坐垫连接 `ADVX-Players`，首次访问时允许“本地网络”
+- [ ] 使用默认 `ws://10.76.7.182:9001` 或设置页保存的新地址后，两个 MQTT 主题均订阅成功
+- [ ] Broker 重启后状态显示“正在重连”，恢复后回到“已连接”，且没有重复消息
+- [ ] App 进入后台后断开并保存当前姿态；回到前台后仅在未主动结束会话时重连
+- [ ] 心率有效而呼吸率无效时仍显示心率；五路 ADC 全满量程时不更新姿态并显示诊断错误
 - [ ] 经期与心境默认关闭，启用时分别追加授权
-- [ ] 心境原始标签优先于 HRV 估算
-- [ ] HRV 不足五个日期时显示“正在建立个人基线”
+- [ ] Apple“心境”只显示用户自述，不从 HRV 生成情绪标签
+- [ ] HRV 基线不足 7 个日期或 10 个样本时显示“信号不足”
+- [ ] 只有 BPM 时，呼吸率等待且其他流不中断
+- [ ] BPM＋呼吸率连续 5 分钟后生成中位数、覆盖率与稳定度
+- [ ] MQTT 姿态在生产健康页可见；未来压力阵列未校准时仍不进行客户端坐姿分类
+- [ ] 心率 10 秒、呼吸率 90 秒、姿态 2 秒无更新时分别显示“已中断”
+- [ ] development build 可手动导入和回放 JSONL；生产界面没有测试入口
+- [ ] 本地提醒默认关闭，拒绝权限后仍保持关闭
+- [ ] 锁屏提醒不显示 HRV、BPM、呼吸率或情绪标签
 - [ ] 杀掉并重启 App 后，上次成功缓存仍可读
 - [ ] 同步失败不丢失旧数据，不推进失败类型 anchor
 - [ ] HealthKit 删除对象同步删除本地镜像
 - [ ] “停止同步”保留缓存
-- [ ] “删除导入缓存”清除镜像与 anchor，不影响系统“健康”原始记录
-- [ ] 日志不出现 HRV、体重、经期或心境原始值
+- [ ] “删除导入缓存”清除镜像、anchor 与派生汇总，不影响系统“健康”原始记录
+- [ ] 日志不出现 HRV、BPM、呼吸率、压力、体重、经期或心境原始值
 
 ## 8. Preview 与 Production
 
-当前范围不提交 TestFlight。将来需要内部 preview：
+内部预览：
 
 ```powershell
 npx eas-cli@latest build --platform ios --profile preview
@@ -127,6 +155,12 @@ npx eas-cli@latest build --platform ios --profile preview
 
 ```powershell
 npx eas-cli@latest build --platform ios --profile production
+```
+
+提交现有生产构建到 TestFlight：
+
+```powershell
+npx eas-cli@latest submit --platform ios --profile production --latest
 ```
 
 生产前必须再次审核隐私文案、App Store 隐私清单、截图、支持链接和健康免责声明。

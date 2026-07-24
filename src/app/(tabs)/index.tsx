@@ -1,6 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useFocusEffect,
+  useLocalSearchParams,
+  useRouter,
+} from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   Pressable,
@@ -11,6 +15,7 @@ import {
 
 import { AppScreen } from '@/components/app-screen';
 import { DateItem, DateStrip } from '@/components/date-strip';
+import { HealthStickerCard } from '@/components/health-sticker-card';
 import { MetricList } from '@/components/metric-list';
 import { PostureTimeline } from '@/components/posture-timeline';
 import { ReportSkeleton } from '@/components/report-skeleton';
@@ -27,17 +32,17 @@ import {
   isISODate,
   parseISODate,
   startOfISOWeek,
+  todayISODate,
   weekdayLabel,
 } from '@/domain/date-utils';
+import { buildHealthStickerPresentation } from '@/domain/health-sticker';
 import { buildReportHealthMetrics } from '@/domain/health-presentation';
-import {
-  DEMO_REPORT_DATE,
-  POSTURE_LABELS,
-} from '@/domain/report';
+import { POSTURE_LABELS } from '@/domain/report';
 import { DayReport } from '@/domain/types';
 import { useReduceMotion } from '@/hooks/use-reduce-motion';
 import { healthDataService } from '@/services/health-data-service';
 import { useHealth } from '@/state/health-context';
+import { useRealtime } from '@/state/realtime-context';
 
 type ReportLoadState = 'loading' | 'ready' | 'error';
 const DATE_STRIP_ADJACENT_WEEK_DAYS = 7;
@@ -47,14 +52,6 @@ interface ReportDateSelection {
   selectedDate: string;
   previousDate?: string;
   transitionId: number;
-}
-
-function todayISODate() {
-  const today = new Date();
-  const year = today.getFullYear();
-  const month = String(today.getMonth() + 1).padStart(2, '0');
-  const day = String(today.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
 }
 
 function AnimatedDateTitle({
@@ -309,7 +306,7 @@ function StatItem({
 export default function ReportScreen() {
   const params = useLocalSearchParams<{ date?: string }>();
   const router = useRouter();
-  const routeDate = isISODate(params.date) ? params.date : DEMO_REPORT_DATE;
+  const routeDate = isISODate(params.date) ? params.date : todayISODate();
   const [selection, setSelection] = useState<ReportDateSelection>({
     routeDate,
     selectedDate: routeDate,
@@ -327,7 +324,15 @@ export default function ReportScreen() {
   const [nearbyReports, setNearbyReports] = useState<DayReport[]>([]);
   const [loadState, setLoadState] = useState<ReportLoadState>('loading');
   const [reloadKey, setReloadKey] = useState(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      setReloadKey((current) => current + 1);
+    }, []),
+  );
   const health = useHealth();
+  const realtime = useRealtime();
+  const reduceMotion = useReduceMotion();
 
   const selectDate = (date: string) => {
     setSelection((current) => {
@@ -378,7 +383,7 @@ export default function ReportScreen() {
     return () => {
       active = false;
     };
-  }, [reloadKey, selectedDate]);
+  }, [realtime.postureRevision, reloadKey, selectedDate]);
 
   const dateStripDates = useMemo<DateItem[]>(() => {
     const availableDates = new Set(nearbyReports.map((item) => item.date));
@@ -410,12 +415,19 @@ export default function ReportScreen() {
   const metrics = useMemo(
     () =>
       buildReportHealthMetrics(
-        report,
         health.samples,
         selectedDate,
         health.sensitive.showSensitiveOnReport,
       ),
-    [health.samples, health.sensitive.showSensitiveOnReport, report, selectedDate],
+    [
+      health.samples,
+      health.sensitive.showSensitiveOnReport,
+      selectedDate,
+    ],
+  );
+  const healthSticker = useMemo(
+    () => (report ? buildHealthStickerPresentation(report) : null),
+    [report],
   );
 
   const openTrends = () => {
@@ -495,7 +507,11 @@ export default function ReportScreen() {
             <Text style={styles.scoreDate}>
               {formatChineseMonthDay(selectedDate)} 星期{weekdayLabel(selectedDate)}
             </Text>
-            <Text style={styles.mainDrag}>主要扣分于{report.score.mainDrag}</Text>
+            <Text style={styles.coverageNote}>
+              记录覆盖 {report.stats.observedMinutes} 分钟 ·
+              仅统计 App 前台连接并实际收到数据的时段
+            </Text>
+            <Text style={styles.mainDrag}>主要关注：{report.score.mainDrag}</Text>
             <View style={styles.statDivider} />
             <View style={styles.statsRow}>
               <StatItem
@@ -511,7 +527,7 @@ export default function ReportScreen() {
               />
               <View style={styles.verticalDivider} />
               <StatItem
-                label="久坐时长"
+                label="在座时长"
                 value={report.stats.seatedText}
                 tone={Palette.amber}
               />
@@ -519,12 +535,13 @@ export default function ReportScreen() {
           </SurfaceCard>
 
           <SurfaceCard>
-            <SectionTitle eyebrow="今日洞察" title="今日状态" accent={Palette.sky} />
+            <SectionTitle eyebrow="坐姿分析" title="当日状态" accent={Palette.sky} />
             <Text style={styles.summary}>{report.aiSummary}</Text>
             <View style={styles.highlight}>
-              <Text style={styles.highlightLabel}>二郎腿</Text>
-              <Ionicons name="arrow-up" size={14} color={Palette.amber} />
-              <Text style={styles.highlightValue}>{report.stats.legCrossMinutes}分钟</Text>
+              <Text style={styles.highlightLabel}>非正坐</Text>
+              <Text style={styles.highlightValue}>
+                {report.stats.nonUprightMinutes}分钟
+              </Text>
               <View style={styles.highlightDot} />
             </View>
             <View style={styles.breakdown}>
@@ -544,29 +561,41 @@ export default function ReportScreen() {
                 </View>
               ))}
               <View style={styles.breakdownTotal}>
-                <Text style={styles.totalLabel}>今日得分</Text>
+                <Text style={styles.totalLabel}>记录时段得分</Text>
                 <Text style={styles.totalValue}>{report.score.value}</Text>
               </View>
             </View>
           </SurfaceCard>
 
+          {healthSticker ? (
+            <HealthStickerCard
+              key={healthSticker.id}
+              presentation={healthSticker}
+              reduceMotion={reduceMotion}
+            />
+          ) : null}
+
           <SurfaceCard>
             <SectionTitle title="姿态分布" />
             <View style={styles.postureSummary}>
-              {report.stats.postureTotals.slice(0, 2).map((total) => (
+              {report.stats.postureTotals
+                .filter((total) => total.minutes > 0)
+                .map((total) => (
                 <Text key={total.posture} style={styles.postureSummaryText}>
                   {POSTURE_LABELS[total.posture]}{' '}
                   <Text
                     style={
-                      total.posture === 'legsCrossed'
-                        ? styles.postureWarning
-                        : styles.postureStrong
+                      total.posture === 'upright'
+                        ? styles.postureStrong
+                        : total.posture === 'away'
+                          ? styles.postureMuted
+                          : styles.postureWarning
                     }>
                     {total.minutes}分钟
                   </Text>{' '}
                   {total.percentage}%
                 </Text>
-              ))}
+                ))}
             </View>
             <PostureTimeline
               segments={report.segments}
@@ -584,7 +613,7 @@ export default function ReportScreen() {
           </View>
           <Text style={styles.emptyTitle}>这一天还没有坐垫数据</Text>
           <Text style={styles.emptyCopy}>
-            Apple Health 记录仍会在下方显示，但不会生成虚假的坐姿评分或今日洞察。
+            Apple Health 记录仍会在下方显示，但不会生成虚假的坐姿评分或坐姿洞察。
           </Text>
           <View style={styles.emptyActions}>
             {nearestReport ? (
@@ -620,7 +649,7 @@ export default function ReportScreen() {
         <MetricList metrics={metrics} />
       </View>
 
-      {loadState === 'ready' && report ? (
+      {loadState === 'ready' && report && report.tags.length > 0 ? (
         <View style={styles.tags}>
           {report.tags.map((tag, index) => (
             <View key={tag} style={[styles.tag, index === 0 && styles.tagActive]}>
@@ -632,7 +661,7 @@ export default function ReportScreen() {
         </View>
       ) : null}
 
-      <Text style={styles.disclaimer}>演示数据 · 非医疗诊断设备</Text>
+      <Text style={styles.disclaimer}>真实记录仅供健康参考 · 非医疗诊断设备</Text>
     </AppScreen>
   );
 }
@@ -717,6 +746,13 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     fontSize: 12,
     marginTop: 5,
+  },
+  coverageNote: {
+    color: Palette.textMuted,
+    textAlign: 'center',
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 6,
   },
   mainDrag: {
     color: Palette.textMuted,
@@ -865,6 +901,10 @@ const styles = StyleSheet.create({
   postureWarning: {
     color: Palette.amber,
     fontWeight: '800',
+  },
+  postureMuted: {
+    color: Palette.textMuted,
+    fontWeight: '700',
   },
   emptyCard: {
     alignItems: 'center',

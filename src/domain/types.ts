@@ -1,13 +1,12 @@
-export type SeatedPosture = 'upright' | 'legsCrossed';
+export type SeatedPosture =
+  | 'upright'
+  | 'leanLeft'
+  | 'leanRight'
+  | 'edge'
+  | 'other';
 export type OccupancyState = 'occupied' | 'away';
 export type PostureState = SeatedPosture | 'away';
 export type MetricTone = 'ok' | 'warn' | 'info' | 'cycle';
-
-export interface UserSummary {
-  id: string;
-  displayName: string;
-  recognitionConfidence?: number;
-}
 
 export interface PostureSegment {
   startMinute: number;
@@ -39,9 +38,10 @@ export interface PressureSample {
 export interface DayStats {
   seatedMinutes: number;
   seatedText: string;
+  observedMinutes: number;
   uprightPercentage: number;
   standCount: number;
-  legCrossMinutes: number;
+  nonUprightMinutes: number;
   longestSitMinutes: number;
   postureTotals: PostureTotal[];
 }
@@ -63,7 +63,8 @@ export interface ScoreSummary {
 export interface HealthMetric {
   type:
     | 'restingHeartRate'
-    | 'emotionReference'
+    | 'hrv'
+    | 'stateOfMind'
     | 'respiratoryRate'
     | 'bodyMass'
     | 'menstrualCycle';
@@ -74,54 +75,40 @@ export interface HealthMetric {
   tone: MetricTone;
   source: string;
   measuredAt?: string;
-  isEstimated?: boolean;
   sensitive?: boolean;
-}
-
-export interface WeightRecord {
-  date: string;
-  valueKg: number;
-  source: string;
-  isEstimated?: boolean;
-}
-
-export type EmotionBand = '放松' | '平静' | '紧张' | '压力偏高';
-
-export interface HrvRecord {
-  timestamp: string;
-  valueMs: number;
-  baselineMs: number;
-  emotionDisplay: EmotionBand;
-  source: string;
-}
-
-export interface MenstrualRecord {
-  cycleStartDate: string;
-  cycleDay: number;
-  phase: '经期' | '卵泡期' | '排卵期' | '黄体期';
-  flow: string;
-  symptoms: string[];
-  expectedPeriodEnd: string;
-  predictedNextPeriodStart: string;
-  source: string;
 }
 
 export interface DayReport {
   date: string;
-  user: UserSummary;
   axisStart: number;
   axisEnd: number;
   firstSeatedAt: string;
   stats: DayStats;
   score: ScoreSummary;
-  healthMetrics: HealthMetric[];
   segments: PostureSegment[];
-  pressureSamples: PressureSample[];
-  hrvRecords: HrvRecord[];
-  weightRecords: WeightRecord[];
-  menstrualRecord: MenstrualRecord;
   aiSummary: string;
   tags: string[];
+}
+
+export type HealthStickerKind =
+  | 'balancedDay'
+  | 'uprightStable'
+  | 'breakTargetMet';
+
+export interface HealthStickerMetric {
+  label: string;
+  value: string;
+}
+
+export interface HealthStickerPresentation {
+  id: string;
+  date: string;
+  kind: HealthStickerKind;
+  title: string;
+  reason: string;
+  advice: string;
+  metrics: HealthStickerMetric[];
+  scopeNote?: string;
 }
 
 export type TrendRangeDays = 7 | 30;
@@ -193,9 +180,8 @@ export interface HealthSyncBatch {
 }
 
 export interface EmotionPresentation {
-  kind: 'selfReported' | 'estimated' | 'buildingBaseline' | 'unavailable';
+  kind: 'selfReported' | 'unavailable';
   label: string;
-  source: 'appleHealthStateOfMind' | 'appleHealthHrv' | 'cushionHrv' | 'none';
+  source: 'appleHealthStateOfMind' | 'none';
   measuredAt?: string;
-  isEstimated: boolean;
 }

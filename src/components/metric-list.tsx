@@ -17,7 +17,8 @@ const TONE_COLORS: Record<MetricTone, string> = {
 
 const METRIC_ICONS: Record<HealthMetric['type'], keyof typeof Ionicons.glyphMap> = {
   restingHeartRate: 'heart-outline',
-  emotionReference: 'sparkles-outline',
+  hrv: 'analytics-outline',
+  stateOfMind: 'happy-outline',
   respiratoryRate: 'pulse-outline',
   bodyMass: 'scale-outline',
   menstrualCycle: 'calendar-outline',
@@ -54,7 +55,7 @@ export function MetricList({ metrics }: MetricListProps) {
           </View>
         );
       })}
-      <Text style={styles.accuracy}>* 心率与呼吸数据在静坐状态下更准确</Text>
+      <Text style={styles.accuracy}>* 数据来自 Apple Health 原始记录，仅供健康参考</Text>
     </View>
   );
 }

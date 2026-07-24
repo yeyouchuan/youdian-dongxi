@@ -1,14 +1,23 @@
 import { Ionicons } from '@expo/vector-icons';
+import { Href, Link } from 'expo-router';
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
 import { AppScreen } from '@/components/app-screen';
+import { MetricList } from '@/components/metric-list';
 import { SectionTitle } from '@/components/section-title';
 import { SurfaceCard } from '@/components/surface-card';
 import { Palette, Radius, Spacing } from '@/constants/theme';
+import { buildLatestHealthMetrics } from '@/domain/health-presentation';
+import { POSTURE_LABELS } from '@/domain/report';
+import {
+  CushionRealtimeConnectionState,
+  RadarFrameState,
+} from '@/domain/realtime-types';
 import { HealthKitSyncState } from '@/domain/types';
 import { HEALTH_TYPES } from '@/services/apple-health-adapter';
 import { useHealth } from '@/state/health-context';
+import { useRealtime } from '@/state/realtime-context';
 
 const TYPE_LABELS: Record<string, string> = {
   [HEALTH_TYPES.restingHeartRate]: '静息心率',
@@ -36,6 +45,38 @@ function formatTime(value?: string) {
     hour: '2-digit',
     minute: '2-digit',
   }).format(new Date(value));
+}
+
+function qualityLabel(value?: number) {
+  if (value === undefined) return '质量待评估';
+  if (value >= 0.85) return `质量良好 ${Math.round(value * 100)}%`;
+  if (value >= 0.7) return `质量一般 ${Math.round(value * 100)}%`;
+  return `质量偏低 ${Math.round(value * 100)}%`;
+}
+
+function radarStatusPresentation(
+  connectionState: CushionRealtimeConnectionState,
+  frameState: RadarFrameState,
+) {
+  if (connectionState === 'connecting') {
+    return { label: '等待 MQTT 连接', color: Palette.textMuted };
+  }
+  if (connectionState === 'reconnecting') {
+    return { label: 'MQTT 重连中', color: Palette.amber };
+  }
+  if (connectionState !== 'connected') {
+    return { label: '尚未连接雷达', color: Palette.textMuted };
+  }
+  if (frameState === 'live') {
+    return { label: '雷达实时', color: Palette.emerald };
+  }
+  if (frameState === 'cached') {
+    return { label: '缓存保活', color: Palette.amber };
+  }
+  if (frameState === 'stale') {
+    return { label: '雷达已中断', color: Palette.red };
+  }
+  return { label: '等待雷达数据', color: Palette.textMuted };
 }
 
 function SyncRow({ state }: { state: HealthKitSyncState }) {
@@ -67,6 +108,7 @@ function SyncRow({ state }: { state: HealthKitSyncState }) {
 
 export default function HealthScreen() {
   const health = useHealth();
+  const realtime = useRealtime();
   const isBusy = health.status === 'connecting' || health.status === 'syncing';
   const latestSync = useMemo(
     () =>
@@ -82,7 +124,46 @@ export default function HealthScreen() {
       [...new Set(health.samples.map((sample) => sample.sourceName).filter(Boolean))],
     [health.samples],
   );
+  const latestMetrics = useMemo(
+    () =>
+      buildLatestHealthMetrics(health.samples, {
+        menstrual: health.sensitive.menstrual,
+        stateOfMind: health.sensitive.stateOfMind,
+      }),
+    [
+      health.samples,
+      health.sensitive.menstrual,
+      health.sensitive.stateOfMind,
+    ],
+  );
   const hasSyncHistory = health.syncStates.length > 0;
+  const heartEvent =
+    realtime.latestByStream.heartRate?.type === 'heartRate'
+      ? realtime.latestByStream.heartRate
+      : undefined;
+  const respiratoryEvent =
+    realtime.latestByStream.respiratoryRate?.type === 'respiratoryRate'
+      ? realtime.latestByStream.respiratoryRate
+      : undefined;
+  const postureEvent =
+    realtime.latestByStream.posture?.type === 'posture'
+      ? realtime.latestByStream.posture
+      : undefined;
+  const radarPresentation = radarStatusPresentation(
+    realtime.connectionState,
+    realtime.radarFrameStatus.state,
+  );
+  const radarDistance = realtime.radarDiagnostics.distanceCm;
+  const distanceInRange =
+    radarDistance !== undefined &&
+    radarDistance >= 60 &&
+    radarDistance <= 120;
+  const radarDistanceCopy =
+    radarDistance === undefined
+      ? '目标距离待检测'
+      : `${radarDistance.toFixed(1)} cm · ${
+          distanceInRange ? '距离合适' : '请调整座位距离'
+        }`;
 
   const statusPresentation = {
     loading: {
@@ -98,7 +179,7 @@ export default function HealthScreen() {
       tone: Palette.textMuted,
     },
     disconnected: {
-      title: '连接你的 Apple Health',
+      title: '开启 Apple Health 同步',
       copy: '首次仅申请静息心率、HRV、呼吸频率和体重的读取权限。',
       icon: 'heart-outline' as const,
       tone: Palette.teal,
@@ -110,8 +191,11 @@ export default function HealthScreen() {
       tone: Palette.teal,
     },
     connected: {
-      title: 'Apple Health 已连接',
-      copy: `最近同步 ${formatTime(latestSync)} · ${health.samples.length} 条本地记录`,
+      title: 'Apple Health 同步已开启',
+      copy:
+        health.samples.length > 0
+          ? `最近同步 ${formatTime(latestSync)} · 已读取 ${health.samples.length} 条真实记录`
+          : '授权请求已完成，但暂未读取到记录；Apple 不会向应用透露单项读取权限是否被拒绝。',
       icon: 'checkmark-circle-outline' as const,
       tone: Palette.emerald,
     },
@@ -138,6 +222,279 @@ export default function HealthScreen() {
         <Text style={styles.subtitle}>只读同步 · 本机加密</Text>
       </View>
 
+      <SurfaceCard>
+        <View style={styles.liveHeader}>
+          <SectionTitle title="坐垫实时数据" icon="radio-outline" />
+          <View
+            style={[
+              styles.connectionBadge,
+              realtime.connectionState === 'connected' &&
+                styles.connectionBadgeLive,
+            ]}>
+            <Text
+              style={[
+                styles.connectionBadgeText,
+                realtime.connectionState === 'connected' &&
+                  styles.connectionBadgeTextLive,
+              ]}>
+              {realtime.connectionState === 'connected'
+                 ? 'MQTT 已连接'
+                : realtime.connectionState === 'connecting'
+                  ? 'MQTT 连接中'
+                  : realtime.connectionState === 'reconnecting'
+                    ? 'MQTT 重连中'
+                    : realtime.connectionState === 'error'
+                      ? 'MQTT 连接失败'
+                  : 'MQTT 未连接'}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.sectionCopy}>
+          BPM 与呼吸率来自当前坐垫会话；不会据此计算 HRV。
+        </Text>
+        <View style={styles.radarStatusRow}>
+          <View
+            style={[
+              styles.radarStatusIcon,
+              { backgroundColor: `${radarPresentation.color}1A` },
+            ]}>
+            <Ionicons
+              name="radio-outline"
+              size={20}
+              color={radarPresentation.color}
+            />
+          </View>
+          <View style={styles.radarStatusText}>
+            <Text
+              style={[
+                styles.radarStatusTitle,
+                { color: radarPresentation.color },
+              ]}>
+              {radarPresentation.label}
+            </Text>
+            <Text
+              style={[
+                styles.radarStatusCopy,
+                radarDistance !== undefined &&
+                  !distanceInRange &&
+                  styles.distanceWarning,
+              ]}>
+              {radarDistanceCopy}
+            </Text>
+          </View>
+        </View>
+        <View style={styles.liveGrid}>
+          <View style={styles.liveMetric}>
+            <Text style={styles.liveLabel}>心率</Text>
+            <View style={styles.liveValueRow}>
+              <Text style={styles.liveValue}>
+                {heartEvent ? Math.round(heartEvent.payload.bpm) : '—'}
+              </Text>
+              <Text style={styles.liveUnit}>BPM</Text>
+            </View>
+            <Text
+              style={[
+                styles.liveMeta,
+                !heartEvent && styles.waitingMeta,
+                realtime.streamStatuses.heartRate.state === 'stale' &&
+                  styles.interrupted,
+              ]}>
+              {realtime.streamStatuses.heartRate.state === 'stale'
+                ? '已中断'
+                : qualityLabel(heartEvent?.quality)}
+            </Text>
+            <Text style={styles.liveSource} numberOfLines={1}>
+              {heartEvent?.deviceId ?? '等待设备数据'}
+            </Text>
+          </View>
+          <View style={styles.liveMetric}>
+            <Text style={styles.liveLabel}>呼吸率</Text>
+            <View style={styles.liveValueRow}>
+              <Text style={styles.liveValue}>
+                {respiratoryEvent
+                  ? respiratoryEvent.payload.breathsPerMinute.toFixed(1)
+                  : '—'}
+              </Text>
+              <Text style={styles.liveUnit}>次/分</Text>
+            </View>
+            <Text
+              style={[
+                styles.liveMeta,
+                !respiratoryEvent && styles.waitingMeta,
+                realtime.streamStatuses.respiratoryRate.state === 'stale' &&
+                  styles.interrupted,
+              ]}>
+              {realtime.streamStatuses.respiratoryRate.state === 'stale'
+                ? '已中断'
+                : qualityLabel(respiratoryEvent?.quality)}
+            </Text>
+            <Text style={styles.liveSource} numberOfLines={1}>
+              {respiratoryEvent?.deviceId ?? '等待设备数据'}
+            </Text>
+          </View>
+        </View>
+        {realtime.capabilities.posture ? (
+          <View style={styles.pressureRow}>
+            <Ionicons
+              name="body-outline"
+              size={20}
+              color={Palette.purple}
+            />
+            <View style={styles.pressureText}>
+              <Text style={styles.pressureTitle}>当前坐姿</Text>
+              <Text
+                style={[
+                  styles.pressureCopy,
+                  realtime.streamStatuses.posture.state === 'stale' &&
+                    styles.interrupted,
+                ]}>
+                {postureEvent
+                  ? `${POSTURE_LABELS[postureEvent.payload.posture]} · ${
+                      realtime.streamStatuses.posture.state === 'stale'
+                        ? '已中断'
+                        : '实时'
+                    }`
+                  : '等待坐垫姿态数据'}
+              </Text>
+            </View>
+          </View>
+        ) : null}
+        {realtime.capabilities.pressure ? (
+          <View style={styles.pressureRow}>
+            <Ionicons
+              name="grid-outline"
+              size={20}
+              color={Palette.purple}
+            />
+            <View style={styles.pressureText}>
+              <Text style={styles.pressureTitle}>压力阵列</Text>
+              <Text style={styles.pressureCopy}>
+                {!realtime.capabilities.pressureCalibrated
+                  ? '需要完成空载校准，校准前不进行坐姿分类'
+                  : realtime.pressureFeature?.inference.occupancy === 'occupied'
+                    ? `持续在座 · ${
+                        realtime.pressureFeature.inference.posture === 'upright'
+                          ? '正坐'
+                          : '其他坐姿'
+                      }`
+                    : '尚未确认持续在座'}
+              </Text>
+            </View>
+          </View>
+        ) : realtime.connectionState === 'connected' &&
+          !realtime.capabilities.posture ? (
+          <Text style={styles.sessionOnly}>
+            生理测量会话进行中；当前设备未报告压力能力，因此不判断在座状态或坐姿。
+          </Text>
+        ) : null}
+        {realtime.connectionError ? (
+          <Text style={styles.connectionError}>
+            请确认已允许本地网络、Broker 地址正确，并且手机与坐垫连接同一 Wi‑Fi。
+          </Text>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          disabled={realtime.connectionState === 'connecting'}
+          onPress={
+            realtime.connectionState === 'connected' ||
+            realtime.connectionState === 'reconnecting'
+              ? () => void realtime.disconnect()
+              : () => void realtime.connect()
+          }
+          style={({ pressed }) => [
+            styles.realtimeButton,
+            pressed && styles.pressed,
+          ]}>
+          <Text style={styles.realtimeButtonText}>
+            {realtime.connectionState === 'connected'
+              ? '结束实时会话'
+              : realtime.connectionState === 'reconnecting'
+                ? '停止重连'
+              : '连接坐垫数据源'}
+          </Text>
+        </Pressable>
+        <Link href={'/cushion-diagnostics' as Href} asChild>
+          <Pressable
+            accessibilityRole="button"
+            style={({ pressed }) => [
+              styles.detailsLink,
+              pressed && styles.pressed,
+            ]}>
+            <Ionicons
+              name="information-circle-outline"
+              size={18}
+              color={Palette.sky}
+            />
+            <Text style={styles.detailsLinkText}>查看连接详情</Text>
+            <Ionicons
+              name="chevron-forward"
+              size={15}
+              color={Palette.textMuted}
+            />
+          </Pressable>
+        </Link>
+        {__DEV__ ? (
+          <Link href={'/cushion-test' as Href} asChild>
+            <Pressable
+              accessibilityRole="button"
+              style={({ pressed }) => [
+                styles.devLink,
+                pressed && styles.pressed,
+              ]}>
+              <Text style={styles.devLinkText}>打开坐垫数据测试</Text>
+            </Pressable>
+          </Link>
+        ) : null}
+      </SurfaceCard>
+
+      <SurfaceCard
+        accessibilityLabel={`${realtime.recovery.label}。生理趋势参考，非心理或医学诊断。`}
+        accessibilityLiveRegion="polite">
+        <SectionTitle title="近期恢复状态" icon="leaf-outline" />
+        <View style={styles.recoveryRow}>
+          <View
+            style={[
+              styles.recoveryIcon,
+              realtime.recovery.state === 'elevatedLoad' &&
+                styles.recoveryIconWarn,
+            ]}>
+            <Ionicons
+              name={
+                realtime.recovery.state === 'insufficient'
+                  ? 'remove'
+                  : realtime.recovery.state === 'elevatedLoad'
+                    ? 'trending-up'
+                    : 'checkmark'
+              }
+              size={22}
+              color={
+                realtime.recovery.state === 'elevatedLoad'
+                  ? Palette.amber
+                  : realtime.recovery.state === 'insufficient'
+                    ? Palette.textMuted
+                    : Palette.emerald
+              }
+            />
+          </View>
+          <View style={styles.recoveryText}>
+            <Text style={styles.recoveryTitle}>
+              {realtime.recovery.label}
+            </Text>
+            <Text style={styles.recoveryCopy}>
+              {realtime.recovery.state === 'insufficient'
+                ? '需要 15 分钟内的 Apple Health SDNN、完整 5 分钟心率与呼吸率，以及足够的个人基线。'
+                : `基于同来源 30 天 HRV 基线 · 置信度${
+                    realtime.recovery.confidence === 'high'
+                      ? '高'
+                      : '中'
+                  }`}
+            </Text>
+          </View>
+        </View>
+        <Text style={styles.disclaimer}>
+          生理趋势参考，非心理或医学诊断。Apple“心境”是独立的用户自述记录。
+        </Text>
+      </SurfaceCard>
       <SurfaceCard
         accessibilityLabel={`${statusPresentation.title}。${statusPresentation.copy}`}
         accessibilityLiveRegion="polite"
@@ -160,7 +517,13 @@ export default function HealthScreen() {
           <Pressable
             accessibilityRole="button"
             disabled={!health.available || isBusy}
-            onPress={hasSyncHistory ? health.sync : health.connect}
+            onPress={
+              health.status === 'disconnected'
+                ? health.connect
+                : hasSyncHistory
+                  ? health.sync
+                  : health.connect
+            }
             style={({ pressed }) => [
               styles.primaryButton,
               pressed && styles.pressed,
@@ -170,7 +533,7 @@ export default function HealthScreen() {
                 ? hasSyncHistory
                   ? '重试同步'
                   : '重新连接'
-                : '连接 Apple Health'}
+                : '开启 Apple Health 同步'}
             </Text>
           </Pressable>
         ) : null}
@@ -186,6 +549,16 @@ export default function HealthScreen() {
             <Text style={styles.secondaryButtonText}>立即同步</Text>
           </Pressable>
         ) : null}
+      </SurfaceCard>
+
+      <SurfaceCard>
+        <SectionTitle title="Apple Health 最近记录" icon="heart-outline" />
+        <Text style={styles.sectionCopy}>
+          这里只显示从 Apple Health 实际读取到的记录、原始来源和测量时间。
+        </Text>
+        <View style={styles.latestMetrics}>
+          <MetricList metrics={latestMetrics} />
+        </View>
       </SurfaceCard>
 
       <SurfaceCard>
@@ -234,7 +607,7 @@ export default function HealthScreen() {
       <View style={styles.privacyNote}>
         <Ionicons name="lock-closed-outline" size={15} color={Palette.textMuted} />
         <Text style={styles.privacyText}>
-          健康数据不上传；日志不会记录 HRV、体重、经期或心境原始值。
+          健康数据不上传；日志不会记录 HRV、BPM、呼吸率、压力、体重、经期或心境原始值。
         </Text>
       </View>
     </AppScreen>
@@ -317,6 +690,186 @@ const styles = StyleSheet.create({
     color: Palette.textMuted,
     fontSize: 12,
     marginTop: 6,
+  },
+  liveHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.sm,
+  },
+  connectionBadge: {
+    minHeight: 28,
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.surfaceMuted,
+    paddingHorizontal: Spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  connectionBadgeLive: { backgroundColor: '#E8F8EC' },
+  connectionBadgeText: {
+    color: Palette.textMuted,
+    fontSize: 10,
+    fontWeight: '800',
+  },
+  connectionBadgeTextLive: { color: Palette.emerald },
+  liveGrid: {
+    flexDirection: 'row',
+    gap: Spacing.md,
+    marginTop: Spacing.lg,
+  },
+  radarStatusRow: {
+    minHeight: 72,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    borderRadius: Radius.md,
+    backgroundColor: Palette.surfaceRaised,
+    padding: Spacing.md,
+    marginTop: Spacing.lg,
+  },
+  radarStatusIcon: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  radarStatusText: { flex: 1 },
+  radarStatusTitle: { fontSize: 13, fontWeight: '800' },
+  radarStatusCopy: {
+    color: Palette.textSecondary,
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 3,
+    fontVariant: ['tabular-nums'],
+  },
+  distanceWarning: { color: Palette.amber, fontWeight: '700' },
+  liveMetric: {
+    flex: 1,
+    minHeight: 142,
+    borderRadius: Radius.md,
+    backgroundColor: Palette.surfaceRaised,
+    padding: Spacing.lg,
+  },
+  liveLabel: {
+    color: Palette.textSecondary,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  liveValueRow: {
+    flexDirection: 'row',
+    alignItems: 'baseline',
+    gap: 5,
+    marginTop: Spacing.sm,
+  },
+  liveValue: {
+    color: Palette.text,
+    fontSize: 30,
+    fontWeight: '800',
+    fontVariant: ['tabular-nums'],
+  },
+  liveUnit: { color: Palette.textMuted, fontSize: 10 },
+  liveMeta: {
+    color: Palette.emerald,
+    fontSize: 10,
+    lineHeight: 15,
+    marginTop: 5,
+  },
+  interrupted: { color: Palette.amber, fontWeight: '800' },
+  waitingMeta: { color: Palette.textMuted },
+  liveSource: { color: Palette.textMuted, fontSize: 9, marginTop: 4 },
+  pressureRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    borderRadius: Radius.md,
+    backgroundColor: '#F4ECFA',
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+  },
+  pressureText: { flex: 1 },
+  pressureTitle: { color: Palette.text, fontSize: 12, fontWeight: '700' },
+  pressureCopy: {
+    color: Palette.textSecondary,
+    fontSize: 10,
+    lineHeight: 16,
+    marginTop: 3,
+  },
+  sessionOnly: {
+    color: Palette.textMuted,
+    fontSize: 10,
+    lineHeight: 17,
+    marginTop: Spacing.md,
+  },
+  connectionError: {
+    color: Palette.red,
+    fontSize: 10,
+    lineHeight: 17,
+    marginTop: Spacing.md,
+  },
+  realtimeButton: {
+    minHeight: 48,
+    borderRadius: Radius.pill,
+    backgroundColor: Palette.text,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginTop: Spacing.lg,
+  },
+  realtimeButtonText: { color: '#FFFFFF', fontSize: 13, fontWeight: '800' },
+  detailsLink: {
+    minHeight: 46,
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 7,
+    paddingHorizontal: Spacing.sm,
+    marginTop: Spacing.sm,
+  },
+  detailsLinkText: {
+    color: Palette.sky,
+    fontSize: 12,
+    fontWeight: '700',
+    flex: 1,
+  },
+  devLink: {
+    minHeight: 44,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: 7,
+    marginTop: Spacing.sm,
+  },
+  devLinkText: { color: Palette.sky, fontSize: 12, fontWeight: '700' },
+  recoveryRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: Spacing.md,
+    marginTop: Spacing.lg,
+  },
+  recoveryIcon: {
+    width: 44,
+    height: 44,
+    borderRadius: 22,
+    backgroundColor: '#E8F8EC',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  recoveryIconWarn: { backgroundColor: '#FFF5D9' },
+  recoveryText: { flex: 1 },
+  recoveryTitle: { color: Palette.text, fontSize: 18, fontWeight: '800' },
+  recoveryCopy: {
+    color: Palette.textSecondary,
+    fontSize: 11,
+    lineHeight: 17,
+    marginTop: 4,
+  },
+  disclaimer: {
+    color: Palette.textMuted,
+    fontSize: 10,
+    lineHeight: 16,
+    marginTop: Spacing.lg,
+  },
+  latestMetrics: {
+    marginTop: Spacing.lg,
   },
   syncList: {
     marginTop: Spacing.lg,

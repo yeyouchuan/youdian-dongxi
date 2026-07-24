@@ -1,6 +1,10 @@
 import { Ionicons } from '@expo/vector-icons';
-import { useLocalSearchParams, useRouter } from 'expo-router';
-import { useEffect, useMemo, useState } from 'react';
+import {
+  useFocusEffect,
+  useLocalSearchParams,
+  useRouter,
+} from 'expo-router';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Animated,
   Platform,
@@ -21,8 +25,8 @@ import { Palette, Radius, Spacing } from '@/constants/theme';
 import {
   formatChineseMonthDay,
   isISODate,
+  todayISODate,
 } from '@/domain/date-utils';
-import { DEMO_REPORT_DATE } from '@/domain/report';
 import {
   buildReportTrendSummary,
   buildTrendAccessibilityLabel,
@@ -34,6 +38,7 @@ import {
 } from '@/domain/types';
 import { useReduceMotion } from '@/hooks/use-reduce-motion';
 import { healthDataService } from '@/services/health-data-service';
+import { useRealtime } from '@/state/realtime-context';
 
 type LoadState = 'loading' | 'ready' | 'error';
 
@@ -61,7 +66,8 @@ export default function TrendsScreen() {
   const params = useLocalSearchParams<{ endDate?: string }>();
   const router = useRouter();
   const reduceMotion = useReduceMotion();
-  const endDate = isISODate(params.endDate) ? params.endDate : DEMO_REPORT_DATE;
+  const realtime = useRealtime();
+  const endDate = isISODate(params.endDate) ? params.endDate : todayISODate();
   const [rangeDays, setRangeDays] = useState<TrendRangeDays>(7);
   const [selection, setSelection] = useState({
     endDate,
@@ -72,6 +78,12 @@ export default function TrendsScreen() {
   const [summary, setSummary] = useState<ReportTrendSummary>();
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [reloadKey, setReloadKey] = useState(0);
+
+  useFocusEffect(
+    useCallback(() => {
+      setReloadKey((current) => current + 1);
+    }, []),
+  );
   const [reveal] = useState(() => new Animated.Value(0));
 
   useEffect(() => {
@@ -98,7 +110,7 @@ export default function TrendsScreen() {
     return () => {
       active = false;
     };
-  }, [endDate, rangeDays, reloadKey]);
+  }, [endDate, rangeDays, realtime.postureRevision, reloadKey]);
 
   useEffect(() => {
     if (loadState !== 'ready') return;

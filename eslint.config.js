@@ -4,6 +4,10 @@ const expoConfig = require('eslint-config-expo/flat');
 module.exports = defineConfig([
   expoConfig,
   {
-    ignores: ['dist/**', 'coverage/**'],
+    ignores: [
+      'dist/**',
+      'coverage/**',
+      'src/vendor/sticker-forge/sticker-forge.js',
+    ],
   },
 ]);

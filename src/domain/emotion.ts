@@ -1,4 +1,5 @@
-import { EmotionBand, EmotionPresentation, HealthKitSample } from '@/domain/types';
+import { EmotionPresentation, HealthKitSample } from '@/domain/types';
+import { localDateForTimestamp } from '@/domain/date-utils';
 
 export const STATE_OF_MIND_LABELS: Record<number, string> = {
   1: '惊叹',
@@ -41,43 +42,6 @@ export const STATE_OF_MIND_LABELS: Record<number, string> = {
   38: '满意',
 };
 
-export function mapHrvToEmotion(valueMs: number, baselineMs: number): EmotionBand {
-  const ratio = baselineMs <= 0 ? 0 : valueMs / baselineMs;
-  if (ratio >= 1.05) return '放松';
-  if (ratio >= 0.85) return '平静';
-  if (ratio >= 0.7) return '紧张';
-  return '压力偏高';
-}
-
-export function calculateHrvBaseline(
-  samples: HealthKitSample[],
-  reportDate: string,
-): number | null {
-  const reportTime = new Date(`${reportDate}T23:59:59`).getTime();
-  const earliest = reportTime - 30 * 24 * 60 * 60 * 1000;
-  const eligible = samples
-    .filter(
-      (sample) =>
-        sample.typeIdentifier === 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN' &&
-        typeof sample.value === 'number',
-    )
-    .filter((sample) => {
-      const time = new Date(sample.startDate).getTime();
-      return time >= earliest && time <= reportTime;
-    });
-
-  const distinctDates = new Set(eligible.map((sample) => sample.startDate.slice(0, 10)));
-  if (distinctDates.size < 5) return null;
-
-  const values = eligible
-    .map((sample) => sample.value as number)
-    .sort((a, b) => a - b);
-  const middle = Math.floor(values.length / 2);
-  return values.length % 2 === 0
-    ? (values[middle - 1] + values[middle]) / 2
-    : values[middle];
-}
-
 function parseStateOfMindValue(value: HealthKitSample['value']) {
   if (typeof value !== 'string') return null;
   try {
@@ -87,11 +51,13 @@ function parseStateOfMindValue(value: HealthKitSample['value']) {
   }
 }
 
-export function buildEmotionPresentation(
+export function buildStateOfMindPresentation(
   samples: HealthKitSample[],
   reportDate: string,
 ): EmotionPresentation {
-  const daySamples = samples.filter((sample) => sample.startDate.slice(0, 10) === reportDate);
+  const daySamples = samples.filter(
+    (sample) => localDateForTimestamp(sample.startDate) === reportDate,
+  );
   const stateOfMind = daySamples
     .filter((sample) => sample.typeIdentifier === 'HKStateOfMindTypeIdentifier')
     .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
@@ -109,38 +75,8 @@ export function buildEmotionPresentation(
       label,
       source: 'appleHealthStateOfMind',
       measuredAt: stateOfMind.startDate,
-      isEstimated: false,
     };
   }
 
-  const latestHrv = daySamples
-    .filter(
-      (sample) =>
-        sample.typeIdentifier === 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN' &&
-        typeof sample.value === 'number',
-    )
-    .sort((a, b) => b.startDate.localeCompare(a.startDate))[0];
-
-  if (!latestHrv) {
-    return { kind: 'unavailable', label: '暂无数据', source: 'none', isEstimated: false };
-  }
-
-  const baseline = calculateHrvBaseline(samples, reportDate);
-  if (baseline === null) {
-    return {
-      kind: 'buildingBaseline',
-      label: '正在建立个人基线',
-      source: 'appleHealthHrv',
-      measuredAt: latestHrv.startDate,
-      isEstimated: true,
-    };
-  }
-
-  return {
-    kind: 'estimated',
-    label: mapHrvToEmotion(latestHrv.value as number, baseline),
-    source: 'appleHealthHrv',
-    measuredAt: latestHrv.startDate,
-    isEstimated: true,
-  };
+  return { kind: 'unavailable', label: '暂无记录', source: 'none' };
 }

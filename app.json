@@ -46,11 +46,13 @@
         }
       ],
       "expo-secure-store",
+      "./plugins/with-local-notifications-only",
+      "expo-notifications",
       [
         "@kingstinct/react-native-healthkit",
         {
           "NSHealthShareUsageDescription": "有垫东西会在你主动连接后读取心率、HRV、呼吸、体重及你选择的敏感健康记录，用于生成仅保存在设备上的健康参考。",
-          "NSHealthUpdateUsageDescription": "有垫东西仅在你主动授权后读取健康数据，不会向 Apple 健康写入或修改任何记录。",
+          "NSHealthUpdateUsageDescription": "有垫东西不会向 Apple 健康写入或修改健康数据；当前版本仅在你主动授权后读取所选健康记录，并在本机生成健康趋势。",
           "background": false
         }
       ]

@@ -10,6 +10,21 @@ const DEVELOPMENT_SCHEME = `${PRODUCTION_SCHEME}-dev`;
 
 export default ({ config }: ConfigContext): ExpoConfig => {
   const isDevelopment = process.env.APP_VARIANT === DEVELOPMENT_VARIANT;
+  const configuredTransportSecurity =
+    (config.ios?.infoPlist?.NSAppTransportSecurity as
+      | Record<string, unknown>
+      | undefined) ?? {};
+  const developmentPlugins: NonNullable<ExpoConfig["plugins"]> =
+    isDevelopment
+      ? [
+          [
+            "expo-dev-client",
+            {
+              addGeneratedScheme: true,
+            },
+          ],
+        ]
+      : [];
 
   return {
     ...config,
@@ -18,12 +33,7 @@ export default ({ config }: ConfigContext): ExpoConfig => {
     scheme: isDevelopment ? DEVELOPMENT_SCHEME : PRODUCTION_SCHEME,
     plugins: [
       ...(config.plugins ?? []),
-      [
-        "expo-dev-client",
-        {
-          addGeneratedScheme: isDevelopment,
-        },
-      ],
+      ...developmentPlugins,
     ],
     ios: {
       ...config.ios,
@@ -32,13 +42,13 @@ export default ({ config }: ConfigContext): ExpoConfig => {
         : PRODUCTION_BUNDLE_IDENTIFIER,
       infoPlist: {
         ...config.ios?.infoPlist,
-        ...(isDevelopment
-          ? {
-              NSAppTransportSecurity: {
-                NSAllowsArbitraryLoads: true,
-              },
-            }
-          : {}),
+        NSLocalNetworkUsageDescription:
+          "有垫东西需要连接同一 Wi-Fi 下的智能坐垫数据广播站，以接收姿态、心率和呼吸数据。",
+        NSAppTransportSecurity: {
+          ...configuredTransportSecurity,
+          NSAllowsLocalNetworking: true,
+          ...(isDevelopment ? { NSAllowsArbitraryLoads: true } : {}),
+        },
       },
     },
   };

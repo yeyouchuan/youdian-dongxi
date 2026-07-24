@@ -18,6 +18,21 @@ export function formatISODate(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+export function formatLocalISODate(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+export function localDateForTimestamp(value: string) {
+  return formatLocalISODate(new Date(value));
+}
+
+export function todayISODate() {
+  return formatLocalISODate(new Date());
+}
+
 export function addDays(value: string, amount: number) {
   const date = parseISODate(value);
   date.setUTCDate(date.getUTCDate() + amount);

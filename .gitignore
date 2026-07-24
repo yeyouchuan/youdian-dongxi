@@ -54,7 +54,9 @@ expo-web.*.log
 *.prompt.md
 
 # local visual QA evidence
+/.playwright-cli/
 /.playwright-mcp/
+/output/
 /apple-health-reference.png
 /design-*.png
 /design-qa.md
