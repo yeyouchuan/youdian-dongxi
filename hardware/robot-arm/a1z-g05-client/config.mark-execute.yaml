@@ -1,0 +1,49 @@
+# Real A1Z execution configuration. Use only with a1z_g05.safe_server.
+server:
+  host: "127.0.0.1"
+  port: 8765
+  timeout_s: 120.0
+
+control:
+  action_fps: 15.0
+  max_step_deg: 2.0
+  max_target_limit_overshoot_deg: 5.0
+  execute_actions: true
+  require_camera: true
+  max_camera_age_s: 0.5
+  locked_joint_indices: [3]
+  home_on_start: false
+  embodiment_type: "so100"
+
+camera:
+  index: 0
+  backend: "v4l2"
+  width: 640
+  height: 480
+  fps: 5
+  fourcc: "MJPG"
+  rotate_180: true
+  server_key: "wrist_right"
+  zero_pad_keys: ["exterior", "wrist_left"]
+  dummy_shape: [3, 480, 640]
+
+arm:
+  backend: "a1zctl"
+  socket_path: "/tmp/a1z.sock"
+  dof: 6
+  has_gripper: true
+  allow_stream_writes: true
+  max_stream_jump_deg: 3.0
+
+mapping:
+  mode: "direct"
+  arm_joint_indices: [0, 1, 2, 4, 5]
+  signs: [1, -1, 1, 1, 1]
+  scales: [2, 2, 2, 3, 2]
+  # Anchor the safe A1Z base pose to the SO101 checkpoint's proprio-state
+  # mean, rather than to a nominal zero that is outside its training center.
+  # A1Z=[-0.16,13.50,-23.97,95.81,72.90,-30.41] deg maps to
+  # SO101=[3.12501,124.34757,121.49454,55.89621,-12.25933] deg.
+  offsets: [3.44501, 151.34757, 169.43454, -162.80379, 48.56067]
+  gripper_deg_open: 45.0
+  gripper_deg_closed: 0.0

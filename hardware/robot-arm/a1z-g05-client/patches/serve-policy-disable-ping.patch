@@ -1,0 +1,16 @@
+diff --git a/scripts/serve_policy.py b/scripts/serve_policy.py
+--- a/scripts/serve_policy.py
++++ b/scripts/serve_policy.py
+@@
+-    async with websockets.serve(bound_handler, host, port, max_size=None):
++    # Policy inference is synchronous and can block the asyncio loop for longer
++    # than websockets' default 20 s keepalive window. Application-level clients
++    # already bound each inference request, so disable protocol pings here.
++    async with websockets.serve(
++        bound_handler,
++        host,
++        port,
++        max_size=None,
++        ping_interval=None,
++        ping_timeout=None,
++    ):

@@ -1,0 +1,6 @@
+-r requirements-dgx-inference.txt
+deepspeed==0.15.4
+liger-kernel>=0.5.0,<0.7
+nvidia-ml-py
+swanlab==0.6.9
+wandb==0.23.1

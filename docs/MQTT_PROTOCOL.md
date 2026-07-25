@@ -1,7 +1,7 @@
-# 智能坐垫 MQTT 接口文档
+# 智能坐垫 MQTT 协议
 
-> 面向队友：如何订阅坐垫的实时姿态/体征数据，自己写页面或服务来消费。
-> 更新：2026-07-24（AdventureX 会场）
+本文说明如何订阅坐垫实时姿态和体征数据，供 App、提醒服务或第三方客户端消费。
+下面的局域网地址是 AdventureX 演示配置，不是协议的一部分。
 
 ## 总览
 
@@ -15,11 +15,10 @@
 
 | 项 | 值 |
 |---|---|
-| Broker 地址 | `10.76.7.182`（Mac 的会场 WiFi IP，**IP 变了要同步改**） |
+| Broker 地址 | 可配置；演示环境使用 `10.76.7.182` |
 | TCP 端口 | `1883`（后端程序 / Python / 硬件用） |
 | WebSocket 端口 | `9001`（浏览器和 App 使用，`ws://10.76.7.182:9001`） |
-| 认证 | 无（匿名允许，仅限会场局域网） |
-| 现成仪表盘 | `http://10.76.7.182:8000/dashboard.html`（同 WiFi 手机直接开） |
+| 认证 | 演示环境匿名，仅允许受控局域网；其他部署必须配置认证 |
 
 ## 主题一：`zuodian/posture`（坐姿，FSR）
 
@@ -93,7 +92,7 @@
 **浏览器（WebSocket）**：
 
 ```html
-<script src="mqtt.min.js"></script>  <!-- 本地文件在 ~/zuodian/radar/，别依赖 CDN -->
+<script src="mqtt.min.js"></script>
 <script>
 const client = mqtt.connect('ws://10.76.7.182:9001');
 client.on('connect', () => {
@@ -127,19 +126,21 @@ c.loop_forever()
 mosquitto_sub -h 10.76.7.182 -t 'zuodian/#' -v
 ```
 
-## 基础设施位置（谁负责重启）
+## 仓库中的实现
 
-| 组件 | 位置 | 启动方式 |
+| 组件 | 位置 |
 |---|---|---|
-| MQTT Broker | Amber 的 Mac | `cd ~/zuodian/radar && uvx --from amqtt amqtt -c broker.yaml` |
-| HTTP 服务(仪表盘) | 同上 | `cd ~/zuodian/radar && python3 -m http.server 8000` |
-| 姿态固件源码 | `~/zuodian/firmware/fsr_posture_mqtt/` | arduino-cli 烧录 ESP32-S3 |
-| 雷达固件源码 | `~/Documents/Arduino/radar_mqtt/` | 烧录 XIAO ESP32-C6 |
+| App MQTT 客户端 | `src/services/mqtt-cushion-transport.ts` |
+| 实时领域适配 | `src/services/cushion-realtime-adapter.ts` |
+| 本地 Broker 配置 | `hardware/robot-arm/cushion-reminder-service/config/` |
+| MQTT simulator | `hardware/robot-arm/cushion-reminder-service/src/cushion_reminder/simulator.py` |
+| 提醒服务消费者 | `hardware/robot-arm/cushion-reminder-service/src/cushion_reminder/mqtt_bridge.py` |
+| 板端固件 | 当前公开仓库尚未包含，必须按本文协议实现 |
 
 ## 已知坑
 
-1. **Mac 的 IP 变了全断**：固件里 `MQTT_HOST` 是写死的，会场 WiFi 重连后先 `ipconfig getifaddr en0` 核对，变了要改固件重烧 + 通知所有订阅方
-2. ESP32-S3 板子姿态/音频调试共用，**烧录互相覆盖**，动板子前群里说一声
-3. 串口 `/dev/cu.usbserial-110` 同时只能一个程序占用
-4. 坐垫线材怕拉扯（后仰扯松过 GND，全通道会读 4095）——App 会丢弃全通道饱和数据，现场仍应立即查线
-5. 姿态阈值基于两人标定，换人 demo 时 `UPRIGHT/AWAY/EDGE` 最稳，`OTHER` 出现偏多属正常
+1. **Broker IP 变化会导致全链路断开**：生产固件应支持配置或服务发现，避免写死地址。
+2. 同一 ESP32-S3 可能在不同演示固件之间切换，烧录前必须确认目标固件和版本。
+3. 串口设备同时只能被一个程序占用。
+4. 坐垫线材松动时可能出现全通道 4095；App 会丢弃该包，现场仍应立即检查线材。
+5. 现有姿态阈值只做过小样本标定，`UPRIGHT/AWAY/EDGE` 最稳定，`OTHER` 是兜底类。
