@@ -1,0 +1,63 @@
+# Three-view production candidate:
+#   exterior    <- current MacBook front camera, atomically published over SSH
+#   wrist_left  <- Mark laptop right-side camera, captured by native Windows
+#   wrist_right <- arm-mounted DaBai, captured directly under WSL
+server:
+  host: "127.0.0.1"
+  port: 8765
+  timeout_s: 120.0
+
+control:
+  action_fps: 15.0
+  max_step_deg: 2.0
+  max_target_limit_overshoot_deg: 5.0
+  execute_actions: true
+  require_camera: true
+  max_camera_age_s: 0.5
+  locked_joint_indices: [3]
+  home_on_start: false
+  embodiment_type: "so100"
+
+camera:
+  # USB/IP re-enumeration changes /dev/videoN after every attach. Resolve the
+  # arm-mounted DaBai by its stable USB serial instead.
+  index: "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Dabai_DC1_CC1N16200WR-video-index0"
+  backend: "v4l2"
+  width: 640
+  height: 480
+  fps: 5
+  fourcc: "MJPG"
+  rotate_180: true
+  server_key: "wrist_right"
+  zero_pad_keys: []
+  dummy_shape: [3, 480, 640]
+  file_images:
+    exterior:
+      path: "/tmp/a1z-vision/exterior-left.jpg"
+      rotate_180: false
+      max_age_s: 60.0
+    wrist_left:
+      path: "/tmp/a1z-vision/exterior-right.jpg"
+      rotate_180: false
+      max_age_s: 60.0
+
+arm:
+  backend: "a1zctl"
+  socket_path: "/tmp/a1z.sock"
+  dof: 6
+  has_gripper: true
+  allow_stream_writes: true
+  max_stream_jump_deg: 3.0
+
+mapping:
+  mode: "direct"
+  arm_joint_indices: [0, 1, 2, 4, 5]
+  signs: [1, -1, 1, 1, 1]
+  scales: [2, 2, 2, 3, 2]
+  # This three-view workflow always starts from the deterministic A1Z neutral
+  # pose [0, 60, -60, 0, 0, 0] deg.  Anchor that pose to the measured SO101
+  # proprioception centre [3.12501, 124.34757, 121.49454, 55.89621,
+  # -12.25933] deg so the first policy observation is in-distribution.
+  offsets: [3.12501, 244.34757, 241.49454, 55.89621, -12.25933]
+  gripper_deg_open: 45.0
+  gripper_deg_closed: 0.0

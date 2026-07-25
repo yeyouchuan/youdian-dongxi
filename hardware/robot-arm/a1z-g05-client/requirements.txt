@@ -1,0 +1,13 @@
+# macOS laptop client dependencies for the A1Z <-> G0.5 preliminary harness.
+# NOTE: G0.5 inference itself does NOT run here. It runs on a remote CUDA GPU
+# box via GalaxeaVLA/scripts/serve_policy.py. This client only talks to it.
+gradio>=4.44,<5
+huggingface-hub>=0.25,<1
+numpy>=1.24
+opencv-python>=4.9
+websockets>=12.0
+msgpack>=1.0
+PyYAML>=6.0
+socksio>=1.0
+pytest>=8.0
+pin>=3.8

@@ -1,0 +1,37 @@
+# ARM64 DGX Spark inference subset of GalaxeaVLA's x86-oriented full lock.
+# Torch/torchvision/torchaudio are installed separately from the cu128 index.
+accelerate==1.8.1
+av==14.2.0
+datasets==3.6.0
+diffusers==0.29.0
+draccus==0.10.0
+einops==0.8.0
+ema-pytorch==0.7.7
+gitpython>=3.1
+huggingface-hub==0.35.0
+hydra-colorlog==1.2.0
+hydra-core==1.3.2
+imageio==2.34.1
+imageio-ffmpeg==0.6.0
+jsonlines==4.0.0
+msgpack>=1.0
+numpy==1.26.4
+opencv-python-headless==4.10.0.84
+packaging==25.0
+pandas==2.2.3
+peft==0.18.0
+pillow==10.2.0
+plotly==6.2.0
+pyarrow>=15
+pyyaml==6.0.3
+rootutils==1.0.7
+rich==13.9.4
+safetensors==0.6.1
+scipy==1.15.3
+timm==0.9.10
+tokenizers>=0.22,<0.23
+torchmetrics==1.7.4
+tqdm>=4.67.1
+transformers==4.57.1
+vector-quantize-pytorch==1.27.6
+websockets==16.0

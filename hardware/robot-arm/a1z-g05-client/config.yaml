@@ -1,0 +1,72 @@
+# ============================================================================
+# A1Z x G0.5 preliminary client configuration (macOS laptop side).
+# Edit these values during on-device validation. All are read by app.py.
+# ============================================================================
+
+# --- Remote G0.5 policy server (runs on a CUDA GPU box) ----------------------
+# On the Windows CUDA desktop the server runs locally, so keep host=localhost
+# (no SSH tunnel needed). Point host at a LAN IP only if the server is remote.
+server:
+  host: "localhost"     # "localhost" when server + client share the machine
+  port: 8765            # must match serve_policy.py --port
+  timeout_s: 30.0
+
+# --- Control loop ------------------------------------------------------------
+control:
+  # Must match the FPS the checkpoint was trained at (so100 default = 15 Hz).
+  action_fps: 15.0
+  # Per-tick safety cap: no arm joint may move more than this many DEGREES per
+  # control tick. Keep small for first on-device runs.
+  max_step_deg: 2.0
+  # Fail-safe default: run perception and action decoding but do not write any
+  # model action to the physical arm. Enable only after on-device calibration.
+  execute_actions: false
+  require_camera: true
+  max_camera_age_s: 0.5
+  # Start each session by homing to the training-distribution center.
+  home_on_start: false
+  # embodiment_type sent in every obs. so100 = single-arm SO-100/101 checkpoint.
+  embodiment_type: "so100"
+
+# --- Camera (wrist camera mounted on the A1Z) --------------------------------
+# The wrist camera is exposed to the model under the server image key below.
+# so100 checkpoints commonly expect: exterior, wrist_right, (legacy) wrist_left.
+# We only physically have the wrist camera -> map it to "wrist_right" and let
+# the client zero-pad the other expected keys.
+camera:
+  index: 0              # cv2.VideoCapture index of the wrist camera
+  backend: "auto"       # "auto" | "dshow" (Windows, recommended) | "msmf" | "avfoundation"
+  width: 640
+  height: 480
+  fps: 30
+  server_key: "wrist_right"
+  # Extra server image keys to always send as zero-padding (no physical camera).
+  zero_pad_keys: ["exterior", "wrist_left"]
+  dummy_shape: [3, 480, 640]   # C,H,W of the zero-padding frames
+
+# --- Arm backend -------------------------------------------------------------
+arm:
+  # "mock"  -> dimos MockAdapter, runs fully in software (validate first).
+  # "dimos" -> real A1Z via dimos ControlCoordinator (Linux/CAN, later stage).
+  backend: "mock"
+  dof: 6
+  has_gripper: true
+  # Home pose in RADIANS for the 6 A1Z arm joints (mock backend homes here).
+  home_joints_rad: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+  home_gripper: 1.0     # official SDK: 0.0 = closed, 1.0 = open
+
+# --- A1Z <-> G0.5(so100) mapping ---------------------------------------------
+# The so100 model frame is 6-D in DEGREES: 5 arm joints + gripper.
+# A1Z is 6 arm joints (rad) + a separate gripper. This section defines the
+# placeholder mapping to calibrate on-device. See mapping.py for the math.
+mapping:
+  # Which 5 of the 6 A1Z arm joints (0-indexed) feed the 5 so100 arm slots.
+  # Default drops the last A1Z joint (index 5). Recalibrate against your arm.
+  arm_joint_indices: [0, 1, 2, 3, 4]
+  # so100 arm-frame -> model-frame transform (degrees). Applied to arm joints.
+  signs:   [1, -1, 1, 1, 1]
+  offsets: [0, 90, 90, 0, 0]
+  # Gripper: official A1Z normalized position (0=closed, 1=open) to model
+  # degrees. These placeholders MUST be calibrated before execute_actions=true.
+  gripper_deg_open: 0.0
+  gripper_deg_closed: 45.0

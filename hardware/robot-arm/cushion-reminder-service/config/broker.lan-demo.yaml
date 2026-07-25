@@ -1,0 +1,15 @@
+---
+# AdventureX LAN demo only. This intentionally permits anonymous clients on
+# the private Wi-Fi so the ESP32 firmware and TestFlight build can connect.
+listeners:
+  default:
+    type: tcp
+    bind: 0.0.0.0:1883
+  websocket:
+    type: ws
+    bind: 0.0.0.0:9001
+plugins:
+  amqtt.plugins.authentication.AnonymousAuthPlugin:
+    allow_anonymous: true
+  amqtt.plugins.sys.broker.BrokerSysPlugin:
+    sys_interval: 20

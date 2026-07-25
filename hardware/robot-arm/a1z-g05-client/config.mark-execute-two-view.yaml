@@ -1,0 +1,54 @@
+# Two-view production configuration:
+#   exterior    <- Mark laptop camera fixed opposite the gripper
+#   wrist_right <- DaBai camera fixed to and moving with the gripper
+# G0.5 expects three image keys; wrist_left remains an explicit zero tensor and
+# is never represented to GPT or the safety gate as real camera evidence.
+server:
+  host: "127.0.0.1"
+  port: 8765
+  timeout_s: 300.0
+
+control:
+  action_fps: 15.0
+  max_step_deg: 2.0
+  max_target_limit_overshoot_deg: 5.0
+  execute_actions: true
+  require_camera: true
+  max_camera_age_s: 0.5
+  locked_joint_indices: [3]
+  home_on_start: false
+  embodiment_type: "so100"
+
+camera:
+  index: "/dev/v4l/by-id/usb-Sonix_Technology_Co.__Ltd._Dabai_DC1_CC1N16200WR-video-index0"
+  backend: "v4l2"
+  width: 640
+  height: 480
+  fps: 5
+  fourcc: "MJPG"
+  rotate_180: true
+  server_key: "wrist_right"
+  zero_pad_keys: ["wrist_left"]
+  dummy_shape: [3, 480, 640]
+  file_images:
+    exterior:
+      path: "/tmp/a1z-vision/exterior-right.jpg"
+      rotate_180: false
+      max_age_s: 60.0
+
+arm:
+  backend: "a1zctl"
+  socket_path: "/tmp/a1z.sock"
+  dof: 6
+  has_gripper: true
+  allow_stream_writes: true
+  max_stream_jump_deg: 3.0
+
+mapping:
+  mode: "direct"
+  arm_joint_indices: [0, 1, 2, 4, 5]
+  signs: [1, -1, 1, 1, 1]
+  scales: [2, 2, 2, 3, 2]
+  offsets: [3.12501, 244.34757, 241.49454, 55.89621, -12.25933]
+  gripper_deg_open: 45.0
+  gripper_deg_closed: 0.0
