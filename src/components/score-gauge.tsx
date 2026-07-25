@@ -4,7 +4,7 @@ import Svg, { Line } from 'react-native-svg';
 import { Palette } from '@/constants/theme';
 
 interface ScoreGaugeProps {
-  score: number;
+  score: number | null;
   status: string;
 }
 
@@ -23,7 +23,22 @@ function point(angleDegrees: number, radius: number) {
 }
 
 export function ScoreGauge({ score, status }: ScoreGaugeProps) {
-  const activeTicks = Math.round((Math.max(0, Math.min(100, score)) / 100) * TICK_COUNT);
+  const tone =
+    score === null
+      ? Palette.textMuted
+      : score >= 90
+        ? Palette.emerald
+        : score >= 80
+          ? Palette.teal
+          : score >= 70
+            ? Palette.amber
+            : Palette.red;
+  const activeTicks =
+    score === null
+      ? 0
+      : Math.round(
+          (Math.max(0, Math.min(100, score)) / 100) * TICK_COUNT,
+        );
   return (
     <View style={styles.wrap}>
       <Svg width={320} height={166} viewBox="0 0 320 166">
@@ -39,13 +54,7 @@ export function ScoreGauge({ score, status }: ScoreGaugeProps) {
               y1={start.y}
               x2={end.x}
               y2={end.y}
-              stroke={
-                active
-                  ? index > activeTicks * 0.72
-                    ? Palette.red
-                    : '#FF6B7F'
-                  : Palette.border
-              }
+              stroke={active ? tone : Palette.border}
               strokeWidth={4.5}
               strokeLinecap="round"
             />
@@ -53,10 +62,10 @@ export function ScoreGauge({ score, status }: ScoreGaugeProps) {
         })}
       </Svg>
       <View style={styles.valueWrap}>
-        <Text style={styles.value}>{score}</Text>
+        <Text style={styles.value}>{score ?? '—'}</Text>
         <View style={styles.statusRow}>
           <Text style={styles.status}>{status}</Text>
-          <View style={styles.statusDot} />
+          <View style={[styles.statusDot, { backgroundColor: tone }]} />
         </View>
       </View>
     </View>
@@ -95,6 +104,5 @@ const styles = StyleSheet.create({
     width: 6,
     height: 6,
     borderRadius: 3,
-    backgroundColor: Palette.red,
   },
 });

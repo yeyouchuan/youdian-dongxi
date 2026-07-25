@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Href, Link, useRouter } from 'expo-router';
+import { useRouter } from 'expo-router';
 import { useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -8,6 +8,7 @@ import { DiagnosticRow } from '@/components/diagnostic-row';
 import { SectionTitle } from '@/components/section-title';
 import { SurfaceCard } from '@/components/surface-card';
 import { Palette, Radius, Spacing } from '@/constants/theme';
+import { POSTURE_LABELS } from '@/domain/report';
 import {
   CushionRealtimeConnectionState,
   RadarDiagnosticsIssue,
@@ -50,6 +51,18 @@ function formatMetric(value: number | undefined, digits = 1) {
   return value === undefined ? '—' : value.toFixed(digits);
 }
 
+function formatContinuousSeated(seconds: number | null) {
+  if (seconds === null) return '—';
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  const remainingSeconds = seconds % 60;
+  const minuteText = String(minutes).padStart(2, '0');
+  const secondText = String(remainingSeconds).padStart(2, '0');
+  return hours > 0
+    ? `${String(hours).padStart(2, '0')}:${minuteText}:${secondText}`
+    : `${minuteText}:${secondText}`;
+}
+
 function radarTone(state: RadarFrameState) {
   if (state === 'live') return Palette.emerald;
   if (state === 'cached') return Palette.amber;
@@ -63,10 +76,17 @@ export default function CushionDiagnosticsScreen() {
   const [reconnecting, setReconnecting] = useState(false);
   const diagnostics = realtime.radarDiagnostics;
   const frameState = realtime.radarFrameStatus.state;
-  const distanceInRange =
-    diagnostics.distanceCm !== undefined &&
-    diagnostics.distanceCm >= 60 &&
-    diagnostics.distanceCm <= 120;
+  const postureEvent =
+    realtime.latestByStream?.posture?.type === 'posture'
+      ? realtime.latestByStream.posture
+      : undefined;
+  const postureState = realtime.streamStatuses?.posture?.state ?? 'waiting';
+  const postureValues = Object.fromEntries(
+    postureEvent?.payload.sensors.map((sensor) => [
+      sensor.sensorId,
+      sensor.rawAdc,
+    ]) ?? [],
+  ) as Record<string, number>;
   const issues =
     diagnostics.issues.length === 0
       ? '协议字段正常'
@@ -127,6 +147,68 @@ export default function CushionDiagnosticsScreen() {
       </SurfaceCard>
 
       <SurfaceCard>
+        <SectionTitle title="坐姿数据" icon="body-outline" />
+        <Text style={styles.sectionCopy}>
+          当前姿态由设备端判定；六路 ADC 为最新原始值，仅用于现场排查。
+        </Text>
+        <View style={styles.rows}>
+          <DiagnosticRow
+            label="当前坐姿"
+            value={
+              postureEvent
+                ? POSTURE_LABELS[postureEvent.payload.posture]
+                : '等待数据'
+            }
+            tone={
+              postureState === 'live'
+                ? Palette.emerald
+                : postureState === 'stale'
+                  ? Palette.red
+                  : Palette.textMuted
+            }
+          />
+          <DiagnosticRow
+            label="数据状态"
+            value={
+              postureState === 'live'
+                ? '实时'
+                : postureState === 'stale'
+                  ? '已中断'
+                  : '等待新帧'
+            }
+          />
+          <DiagnosticRow
+            label="最近更新"
+            value={formatTime(postureEvent?.capturedAt)}
+          />
+          <DiagnosticRow
+            label="左膝 s4"
+            value={postureValues.leftKnee?.toString() ?? '—'}
+          />
+          <DiagnosticRow
+            label="左中 s6"
+            value={postureValues.leftMid?.toString() ?? '—'}
+          />
+          <DiagnosticRow
+            label="左坐骨 s2"
+            value={postureValues.leftIschial?.toString() ?? '—'}
+          />
+          <DiagnosticRow
+            label="右坐骨 s3"
+            value={postureValues.rightIschial?.toString() ?? '—'}
+          />
+          <DiagnosticRow
+            label="右中 s5"
+            value={postureValues.rightMid?.toString() ?? '—'}
+          />
+          <DiagnosticRow
+            label="右膝 s1"
+            value={postureValues.rightKnee?.toString() ?? '—'}
+          />
+        </View>
+      </SurfaceCard>
+
+      <SurfaceCard>
         <SectionTitle title="雷达帧" icon="radio-outline" />
         <View style={styles.rows}>
           <DiagnosticRow
@@ -134,20 +216,12 @@ export default function CushionDiagnosticsScreen() {
             value={diagnostics.seq?.toString() ?? '—'}
           />
           <DiagnosticRow
-            label="目标距离"
-            value={
-              diagnostics.distanceCm === undefined
-                ? '—'
-                : `${diagnostics.distanceCm.toFixed(1)} cm · ${
-                    distanceInRange ? '合适' : '请调整'
-                  }`
-            }
+            label="连续久坐"
+            value={formatContinuousSeated(realtime.continuousSeatedSeconds)}
             tone={
-              diagnostics.distanceCm === undefined
+              realtime.continuousSeatedSeconds === null
                 ? Palette.textMuted
-                : distanceInRange
-                  ? Palette.emerald
-                  : Palette.amber
+                : Palette.amber
             }
           />
           <DiagnosticRow
@@ -216,17 +290,18 @@ export default function CushionDiagnosticsScreen() {
         </Text>
       </Pressable>
 
-      <Link href={'/settings' as Href} asChild>
-        <Pressable
-          accessibilityRole="button"
-          style={({ pressed }) => [
-            styles.secondaryButton,
-            pressed && styles.pressed,
-          ]}>
-          <Ionicons name="settings-outline" size={18} color={Palette.sky} />
-          <Text style={styles.secondaryButtonText}>修改 Broker 地址</Text>
-        </Pressable>
-      </Link>
+      <Pressable
+        accessibilityRole="button"
+        onPress={() => router.push('/settings')}
+        style={({ pressed }) => [
+          styles.secondaryButton,
+          pressed && styles.pressed,
+        ]}>
+        <Ionicons name="settings-outline" size={18} color={Palette.sky} />
+        <Text style={styles.secondaryButtonText} numberOfLines={1}>
+          修改 Broker 地址
+        </Text>
+      </Pressable>
     </AppScreen>
   );
 }

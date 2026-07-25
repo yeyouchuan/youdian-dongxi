@@ -2,6 +2,8 @@ export type SeatedPosture =
   | 'upright'
   | 'leanLeft'
   | 'leanRight'
+  | 'forward'
+  | 'recline'
   | 'edge'
   | 'other';
 export type OccupancyState = 'occupied' | 'away';
@@ -41,21 +43,29 @@ export interface DayStats {
   observedMinutes: number;
   uprightPercentage: number;
   standCount: number;
+  validBreakCount: number;
+  breakTarget: number;
   nonUprightMinutes: number;
   longestSitMinutes: number;
+  longestNonUprightMinutes: number;
+  dominantNonUprightPosture: SeatedPosture | null;
   postureTotals: PostureTotal[];
 }
 
 export interface ScoreBreakdownItem {
   label: string;
   detail: string;
-  delta: number;
+  points: number;
+  maxPoints: number;
 }
 
+export type ScoreConfidence = 'insufficient' | 'preliminary' | 'stable';
+
 export interface ScoreSummary {
-  value: number;
+  value: number | null;
   status: string;
   isOK: boolean;
+  confidence: ScoreConfidence;
   mainDrag: string;
   breakdown: ScoreBreakdownItem[];
 }
@@ -122,6 +132,7 @@ export interface ReportTrendPoint {
   date: string;
   hasData: boolean;
   score: number | null;
+  confidence: ScoreConfidence | null;
   uprightPercentage: number | null;
   longestSitMinutes: number | null;
   standCount: number | null;
@@ -138,6 +149,8 @@ export interface ReportTrendSummary {
   endDate: string;
   points: ReportTrendPoint[];
   dataDays: number;
+  stableDays: number;
+  preliminaryDays: number;
   averageScore: number | null;
   averageUprightPercentage: number | null;
   averageLongestSitMinutes: number | null;

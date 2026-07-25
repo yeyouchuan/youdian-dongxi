@@ -73,19 +73,30 @@ export type CushionPosture =
   | 'upright'
   | 'leanLeft'
   | 'leanRight'
+  | 'forward'
+  | 'recline'
   | 'edge'
   | 'other';
 
 export type CushionPostureSensorId =
+  | 'leftKnee'
+  | 'leftMid'
   | 'leftIschial'
   | 'rightIschial'
-  | 'leftThigh'
-  | 'rightThigh'
-  | 'frontEdge';
+  | 'rightMid'
+  | 'rightKnee';
 
 export interface CushionPostureSensorReading {
   sensorId: CushionPostureSensorId;
   rawAdc: number;
+}
+
+export interface CushionPressureBalance {
+  leftPercentage: number;
+  rightPercentage: number;
+  ischialPercentage: number;
+  legPercentage: number;
+  capturedAt: string;
 }
 
 export interface RealtimeEventBase {
@@ -118,7 +129,7 @@ export type CushionRealtimeEvent =
       type: 'posture';
       payload: {
         posture: CushionPosture;
-        layoutId: 'fsr5-v1';
+        layoutId: 'fsr6-v1';
         sensors: CushionPostureSensorReading[];
       };
     })
@@ -197,6 +208,8 @@ export interface PostureInference {
     | 'upright'
     | 'leanLeft'
     | 'leanRight'
+    | 'forward'
+    | 'recline'
     | 'edge'
     | 'other'
     | 'unknown';
@@ -229,6 +242,8 @@ export interface RealtimePostureSegment {
     | 'upright'
     | 'leanLeft'
     | 'leanRight'
+    | 'forward'
+    | 'recline'
     | 'edge'
     | 'other'
     | 'away'

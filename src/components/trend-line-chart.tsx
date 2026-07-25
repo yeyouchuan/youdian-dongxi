@@ -24,7 +24,7 @@ const PLOT_LEFT = 24;
 const PLOT_RIGHT = 304;
 const PLOT_TOP = 18;
 const PLOT_BOTTOM = 142;
-const SCORE_MIN = 50;
+const SCORE_MIN = 0;
 const SCORE_MAX = 100;
 
 function yForScore(score: number) {
@@ -46,7 +46,7 @@ function contiguousSegments(points: ReportTrendPoint[]) {
   let active: { index: number; point: ReportTrendPoint }[] = [];
 
   points.forEach((point, index) => {
-    if (point.score === null) {
+    if (point.score === null || point.confidence !== 'stable') {
       if (active.length > 0) segments.push(active);
       active = [];
       return;
@@ -91,8 +91,10 @@ export function TrendLineChart({
   const selectedLabel = selectedPoint
     ? `${formatChineseMonthDay(selectedPoint.date)}，${
         selectedPoint.score === null
-          ? '无坐垫数据'
-          : `健康得分${selectedPoint.score}分`
+          ? selectedPoint.hasData
+            ? '数据不足，暂不评分'
+            : '无坐垫数据'
+          : `${selectedPoint.confidence === 'preliminary' ? '初步' : '稳定'}健康得分${selectedPoint.score}分`
       }`
     : '暂无趋势数据';
 
@@ -104,8 +106,10 @@ export function TrendLineChart({
         </Text>
         <Text style={styles.selectedScore}>
           {selectedPoint?.score === null || !selectedPoint
-            ? '无数据'
-            : `${selectedPoint.score} 分`}
+            ? selectedPoint?.hasData
+              ? '数据不足'
+              : '无数据'
+            : `${selectedPoint.score} 分${selectedPoint.confidence === 'preliminary' ? ' · 初步' : ''}`}
         </Text>
       </View>
       <Pressable
@@ -125,7 +129,7 @@ export function TrendLineChart({
         onPress={handlePress}
         style={styles.chart}>
         <Svg width="100%" height={VIEW_HEIGHT} viewBox={`0 0 ${VIEW_WIDTH} ${VIEW_HEIGHT}`}>
-          {[60, 80, 100].map((score) => (
+          {[0, 50, 100].map((score) => (
             <Line
               key={score}
               x1={PLOT_LEFT}
@@ -156,8 +160,18 @@ export function TrendLineChart({
                 cx={xForIndex(index, points.length)}
                 cy={yForScore(point.score)}
                 r={point.date === selectedDate ? 5.5 : 3}
-                fill={point.date === selectedDate ? Palette.red : Palette.surface}
-                stroke={Palette.red}
+                fill={
+                  point.confidence === 'preliminary'
+                    ? Palette.surface
+                    : point.date === selectedDate
+                      ? Palette.red
+                      : Palette.surface
+                }
+                stroke={
+                  point.confidence === 'preliminary'
+                    ? Palette.amber
+                    : Palette.red
+                }
                 strokeWidth={2}
               />
             ),
@@ -179,7 +193,9 @@ export function TrendLineChart({
           </SvgText>
         </Svg>
       </Pressable>
-      <Text style={styles.hint}>轻点图表选择日期；断点表示当天没有坐垫数据</Text>
+      <Text style={styles.hint}>
+        实线连接稳定评分；橙色空心点表示采集不足 60 分钟的初步评分
+      </Text>
     </View>
   );
 }

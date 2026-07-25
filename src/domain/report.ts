@@ -14,6 +14,8 @@ export const POSTURE_LABELS: Record<PostureState, string> = {
   upright: '正坐',
   leanLeft: '左歪',
   leanRight: '右歪',
+  forward: '重心前移',
+  recline: '后仰',
   edge: '坐前缘',
   other: '其他坐姿',
   away: '离座',
@@ -23,6 +25,8 @@ export const POSTURE_COLORS: Record<PostureState, string> = {
   upright: '#34C759',
   leanLeft: '#FF9F0A',
   leanRight: '#FFB340',
+  forward: '#FF7A45',
+  recline: '#5E8CE6',
   edge: '#FF453A',
   other: '#AF52DE',
   away: '#D1D1D6',
@@ -32,10 +36,17 @@ export const POSTURE_ORDER: PostureState[] = [
   'upright',
   'leanLeft',
   'leanRight',
+  'forward',
+  'recline',
   'edge',
   'other',
   'away',
 ];
+
+const VALID_BREAK_MINUTES = 2;
+const SEGMENT_JOIN_GAP_MINUTES = 10 / 60;
+const SCORE_MINIMUM_MINUTES = 15;
+const SCORE_STABLE_MINUTES = 60;
 
 function durationText(minutes: number) {
   const hours = Math.floor(minutes / 60);
@@ -50,7 +61,7 @@ function segmentDuration(segment: PostureSegment) {
 }
 
 function wholeMinutes(value: number) {
-  return value > 0 ? Math.max(1, Math.round(value)) : 0;
+  return value > 0 ? Math.max(1, Math.floor(value)) : 0;
 }
 
 function displayMinutes(value: number) {
@@ -67,15 +78,23 @@ function longestContinuousSit(segments: PostureSegment[]) {
 
   for (const segment of sorted) {
     if (segment.posture === 'away') {
-      currentStart = null;
-      currentEnd = null;
+      if (segmentDuration(segment) >= VALID_BREAK_MINUTES) {
+        currentStart = null;
+        currentEnd = null;
+      } else if (currentEnd !== null) {
+        currentEnd = Math.max(currentEnd, segment.endMinute);
+        longest = Math.max(
+          longest,
+          currentEnd - (currentStart ?? currentEnd),
+        );
+      }
       continue;
     }
 
     if (
       currentStart === null ||
       currentEnd === null ||
-      segment.startMinute - currentEnd > 10 / 60
+      segment.startMinute - currentEnd > SEGMENT_JOIN_GAP_MINUTES
     ) {
       currentStart = segment.startMinute;
       currentEnd = segment.endMinute;
@@ -88,16 +107,68 @@ function longestContinuousSit(segments: PostureSegment[]) {
   return longest;
 }
 
+function longestNonUprightSit(segments: PostureSegment[]) {
+  const sorted = [...segments].sort(
+    (a, b) => a.startMinute - b.startMinute,
+  );
+  let longest = 0;
+  let currentStart: number | null = null;
+  let currentEnd: number | null = null;
+
+  for (const segment of sorted) {
+    if (segment.posture === 'away' || segment.posture === 'upright') {
+      currentStart = null;
+      currentEnd = null;
+      continue;
+    }
+
+    if (
+      currentStart === null ||
+      currentEnd === null ||
+      segment.startMinute - currentEnd > SEGMENT_JOIN_GAP_MINUTES
+    ) {
+      currentStart = segment.startMinute;
+      currentEnd = segment.endMinute;
+    } else {
+      currentEnd = Math.max(currentEnd, segment.endMinute);
+    }
+    longest = Math.max(longest, currentEnd - currentStart);
+  }
+
+  return longest;
+}
+
+function countValidBreaks(segments: PostureSegment[]) {
+  const sorted = [...segments].sort(
+    (a, b) => a.startMinute - b.startMinute,
+  );
+  let count = 0;
+  for (let index = 1; index < sorted.length; index += 1) {
+    const current = sorted[index];
+    const previous = sorted[index - 1];
+    if (
+      current.posture === 'away' &&
+      previous.posture !== 'away' &&
+      segmentDuration(current) >= VALID_BREAK_MINUTES &&
+      current.startMinute - previous.endMinute <= SEGMENT_JOIN_GAP_MINUTES
+    ) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
 export function buildDayStats(
   segments: PostureSegment[],
   _axisStart: number,
   _axisEnd: number,
-  standCount: number,
 ): DayStats {
   const totals = new Map<PostureState, number>([
     ['upright', 0],
     ['leanLeft', 0],
     ['leanRight', 0],
+    ['forward', 0],
+    ['recline', 0],
     ['edge', 0],
     ['other', 0],
     ['away', 0],
@@ -122,6 +193,17 @@ export function buildDayStats(
   );
   const seatedMinutes = wholeMinutes(seatedMinutesRaw);
   const observedMinutes = wholeMinutes(observedMinutesRaw);
+  const validBreakCount = countValidBreaks(segments);
+  const dominantNonUprightPosture =
+    POSTURE_ORDER.filter(
+      (posture): posture is SeatedPosture =>
+        posture !== 'upright' && posture !== 'away',
+    )
+      .map((posture) => ({
+        posture,
+        minutes: totals.get(posture) ?? 0,
+      }))
+      .sort((a, b) => b.minutes - a.minutes)[0] ?? null;
 
   return {
     seatedMinutes,
@@ -131,9 +213,19 @@ export function buildDayStats(
       seatedMinutesRaw === 0
         ? 0
         : Math.round((uprightMinutesRaw / seatedMinutesRaw) * 100),
-    standCount,
+    standCount: validBreakCount,
+    validBreakCount,
+    breakTarget: getBreakTarget(seatedMinutes),
     nonUprightMinutes: wholeMinutes(nonUprightMinutesRaw),
     longestSitMinutes: wholeMinutes(longestContinuousSit(segments)),
+    longestNonUprightMinutes: wholeMinutes(
+      longestNonUprightSit(segments),
+    ),
+    dominantNonUprightPosture:
+      dominantNonUprightPosture &&
+      dominantNonUprightPosture.minutes > 0
+        ? dominantNonUprightPosture.posture
+        : null,
     postureTotals: POSTURE_ORDER.map((posture) => ({
         posture,
         minutes: displayMinutes(totals.get(posture) ?? 0),
@@ -167,78 +259,145 @@ export function classifyPressureSample(
   return { occupancy: 'occupied', posture, confidence };
 }
 
-export function getStandTarget(seatedMinutes: number) {
-  return Math.max(1, Math.floor(seatedMinutes / 90));
+export function getBreakTarget(seatedMinutes: number) {
+  return Math.floor(Math.max(0, seatedMinutes) / 60);
+}
+
+export const getStandTarget = getBreakTarget;
+
+function interpolatePoints(
+  minutes: number,
+  stops: readonly (readonly [number, number])[],
+) {
+  if (minutes <= stops[0][0]) return stops[0][1];
+  for (let index = 1; index < stops.length; index += 1) {
+    const [endMinute, endPoints] = stops[index];
+    if (minutes > endMinute) continue;
+    const [startMinute, startPoints] = stops[index - 1];
+    const progress =
+      (minutes - startMinute) / (endMinute - startMinute);
+    return Math.round(
+      startPoints + (endPoints - startPoints) * progress,
+    );
+  }
+  return stops.at(-1)?.[1] ?? 0;
+}
+
+function scoreStatus(value: number | null, confidence: ScoreSummary['confidence']) {
+  if (value === null) return '数据不足';
+  if (confidence === 'preliminary') return '初步评分';
+  if (value >= 90) return '优秀';
+  if (value >= 80) return '良好';
+  if (value >= 70) return '待改善';
+  return '需关注';
 }
 
 export function buildScore(stats: DayStats): ScoreSummary {
-  const longSitPenalty =
-    stats.longestSitMinutes <= 90
-      ? 0
-      : -Math.min(
-          18,
-          5 + Math.ceil((stats.longestSitMinutes - 90) / 10),
+  const confidence: ScoreSummary['confidence'] =
+    stats.seatedMinutes < SCORE_MINIMUM_MINUTES
+      ? 'insufficient'
+      : stats.seatedMinutes < SCORE_STABLE_MINUTES
+        ? 'preliminary'
+        : 'stable';
+  const posturePoints = Math.round(
+    65 * (stats.uprightPercentage / 100),
+  );
+  const continuousSitPoints = interpolatePoints(
+    stats.longestSitMinutes,
+    [
+      [0, 25],
+      [60, 25],
+      [75, 20],
+      [90, 12],
+      [120, 4],
+      [150, 0],
+    ],
+  );
+  const breakPoints =
+    stats.breakTarget === 0
+      ? 10
+      : Math.round(
+          10 *
+            Math.min(
+              1,
+              stats.validBreakCount / stats.breakTarget,
+            ),
         );
-  const standTarget = getStandTarget(stats.seatedMinutes);
-  const activityPenalty =
-    stats.standCount >= standTarget
-      ? 0
-      : -Math.min(10, (standTarget - stats.standCount) * 3);
   const breakdown: ScoreBreakdownItem[] = [
     {
-      label: '基础分',
-      detail: `真实坐姿记录 ${stats.seatedText} · 正坐 ${stats.uprightPercentage}%`,
-      delta: 100,
+      label: '坐姿质量',
+      detail: `正坐 ${stats.uprightPercentage}% · 权重 65%`,
+      points: posturePoints,
+      maxPoints: 65,
     },
     {
-      label: `非正坐 ${stats.nonUprightMinutes} 分钟`,
-      detail: '仅展示实际分类结果，暂不参与评分',
-      delta: 0,
+      label: '连续久坐',
+      detail:
+        stats.longestSitMinutes <= 60
+          ? `最长 ${stats.longestSitMinutes} 分钟 · 60 分钟内不扣分`
+          : `最长 ${stats.longestSitMinutes} 分钟 · 超过 60 分钟开始降分`,
+      points: continuousSitPoints,
+      maxPoints: 25,
     },
     {
-      label: `连续久坐 ${stats.longestSitMinutes} 分钟`,
-      detail: '连续坐姿片段超过 90 分钟时扣分',
-      delta: longSitPenalty,
-    },
-    {
-      label: `起身活动 ${stats.standCount} 次`,
-      detail: `按坐姿时长建议至少 ${standTarget} 次`,
-      delta: activityPenalty,
+      label: '有效离座',
+      detail:
+        stats.breakTarget === 0
+          ? '在座不足 60 分钟，暂不要求离座次数'
+          : `连续离座满 2 分钟计一次 · ${stats.validBreakCount}/${stats.breakTarget} 次`,
+      points: breakPoints,
+      maxPoints: 10,
     },
   ];
-  const value = Math.max(
+  const computedValue = breakdown.reduce(
+    (total, item) => total + item.points,
     0,
-    breakdown.reduce((total, item) => total + item.delta, 0),
   );
-  const penalties = [
-    {
-      value: longSitPenalty,
-      label: `连续久坐 ${stats.longestSitMinutes} 分钟`,
-    },
-    { value: activityPenalty, label: `起身活动仅 ${stats.standCount} 次` },
-  ].filter((item) => item.value < 0);
-  const mainPenalty = penalties.sort((a, b) => a.value - b.value)[0];
+  const value = confidence === 'insufficient' ? null : computedValue;
+  const mainGap = [...breakdown]
+    .map((item) => ({
+      gap: item.maxPoints - item.points,
+      label:
+        item.label === '坐姿质量'
+          ? `正坐比例 ${stats.uprightPercentage}%`
+          : item.label === '连续久坐'
+            ? `连续久坐 ${stats.longestSitMinutes} 分钟`
+            : `有效离座 ${stats.validBreakCount}/${stats.breakTarget} 次`,
+    }))
+    .sort((a, b) => b.gap - a.gap)[0];
 
   return {
     value,
-    status: value >= 70 ? '处于正常范围' : '建议关注',
-    isOK: value >= 70,
-    mainDrag: mainPenalty?.label ?? '真实记录中未发现明显扣分项',
+    status: scoreStatus(value, confidence),
+    isOK: value !== null && value >= 80,
+    confidence,
+    mainDrag:
+      confidence === 'insufficient'
+        ? `至少记录 ${SCORE_MINIMUM_MINUTES} 分钟后生成初步评分`
+        : mainGap && mainGap.gap > 0
+          ? mainGap.label
+          : '记录时段各项表现均达到满分',
     breakdown,
   };
 }
 
 export function buildDailyInsight(report: Pick<DayReport, 'stats' | 'score'>) {
-  if (report.stats.longestSitMinutes >= 120) {
-    return `已记录时段最值得改善的是连续久坐 ${report.stats.longestSitMinutes} 分钟。下一次专注前可以先设一个 90 分钟起身提醒。`;
+  if (report.score.confidence === 'insufficient') {
+    return `当前只有 ${report.stats.seatedMinutes} 分钟有效在座数据；记录满 15 分钟后会生成初步评分。`;
   }
-  if (report.stats.nonUprightMinutes > 40) {
-    return `已记录时段中非正坐累计 ${report.stats.nonUprightMinutes} 分钟；该数据仅作姿态观察，暂不参与评分。`;
+  if (report.stats.longestSitMinutes >= 90) {
+    return `已记录时段最值得改善的是连续久坐 ${report.stats.longestSitMinutes} 分钟。45 分钟时可开始准备活动，尽量不要连续超过 60 分钟。`;
+  }
+  if (
+    report.stats.dominantNonUprightPosture &&
+    report.stats.longestNonUprightMinutes >= 10
+  ) {
+    return `主要非正坐类型是${POSTURE_LABELS[report.stats.dominantNonUprightPosture]}，最长连续 ${report.stats.longestNonUprightMinutes} 分钟。可以先调整坐垫位置和双脚支撑。`;
   }
   if (report.stats.uprightPercentage >= 90) {
     return `已记录时段正坐比例达到 ${report.stats.uprightPercentage}%，真实坐姿记录整体稳定。`;
   }
-  return `已记录时段正坐比例为 ${report.stats.uprightPercentage}%，记录到起身 ${report.stats.standCount} 次。`;
+  return `已记录时段正坐比例为 ${report.stats.uprightPercentage}%，记录到 ${report.stats.validBreakCount} 次有效离座。`;
 }
 
 function localDayBounds(date: string) {
@@ -308,21 +467,6 @@ function normalizedPostureSegments(
   return normalized;
 }
 
-function countStandEvents(segments: PostureSegment[]) {
-  let count = 0;
-  for (let index = 1; index < segments.length; index += 1) {
-    if (
-      segments[index].posture === 'away' &&
-      segments[index - 1].posture !== 'away' &&
-      segments[index].startMinute - segments[index - 1].endMinute <=
-        10 / 60
-    ) {
-      count += 1;
-    }
-  }
-  return count;
-}
-
 function minuteLabel(minute: number) {
   const hours = Math.floor(minute / 60);
   const minutes = minute % 60;
@@ -331,9 +475,11 @@ function minuteLabel(minute: number) {
 
 function buildTags(stats: DayStats) {
   const tags: string[] = [];
-  if (stats.longestSitMinutes > 90) tags.push('连续久坐');
+  if (stats.longestSitMinutes > 60) tags.push('连续久坐');
   if (stats.uprightPercentage >= 90) tags.push('坐姿稳定');
-  if (stats.standCount > 0) tags.push(`起身${stats.standCount}次`);
+  if (stats.validBreakCount > 0) {
+    tags.push(`有效离座${stats.validBreakCount}次`);
+  }
   return tags;
 }
 
@@ -354,8 +500,7 @@ export function buildDayReportFromStoredSegments(
     24 * 60,
     Math.max(axisStart + 60, Math.ceil(latestEnd / 60) * 60),
   );
-  const standCount = countStandEvents(segments);
-  const stats = buildDayStats(segments, axisStart, axisEnd, standCount);
+  const stats = buildDayStats(segments, axisStart, axisEnd);
   if (stats.seatedMinutes === 0) return null;
   const score = buildScore(stats);
   const draft = {

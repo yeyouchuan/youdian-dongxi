@@ -1,4 +1,7 @@
-import type { IClientOptions, MqttClient } from 'mqtt';
+import mqtt, {
+  type IClientOptions,
+  type MqttClient,
+} from 'mqtt';
 
 import {
   CushionPosture,
@@ -11,7 +14,7 @@ import {
   RealtimeImportError,
 } from '@/domain/realtime-types';
 
-export const DEFAULT_CUSHION_MQTT_URL = 'ws://10.76.7.182:9001';
+export const DEFAULT_CUSHION_MQTT_URL = 'ws://10.76.12.7:9001';
 export const CUSHION_MQTT_SETTING_KEY = 'cushion.mqtt.url';
 
 const POSTURE_TOPIC = 'zuodian/posture';
@@ -40,10 +43,7 @@ interface TransportDependencies {
 }
 
 const defaultConnectClient: MqttConnect = (brokerUrl, options) => {
-  // Keep MQTT.js out of Jest's ESM loader until a real connection is requested.
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const mqttModule = require('mqtt') as typeof import('mqtt');
-  return mqttModule.connect(brokerUrl, options);
+  return mqtt.connect(brokerUrl, options);
 };
 
 export interface CushionMqttTransport {
@@ -138,6 +138,8 @@ function mappedPosture(value: unknown): CushionPosture | undefined {
   if (value === 'UPRIGHT') return 'upright';
   if (value === 'LEAN_L') return 'leanLeft';
   if (value === 'LEAN_R') return 'leanRight';
+  if (value === 'FORWARD') return 'forward';
+  if (value === 'RECLINE') return 'recline';
   if (value === 'EDGE') return 'edge';
   if (value === 'OTHER') return 'other';
   return undefined;
@@ -302,13 +304,14 @@ export function createMqttCushionTransport(
         type: 'posture',
         payload: {
           posture: mappedPosture(input.pose),
-          layoutId: 'fsr5-v1',
+          layoutId: 'fsr6-v1',
           sensors: [
-            { sensorId: 'leftIschial', rawAdc: input.s1 },
-            { sensorId: 'rightIschial', rawAdc: input.s4 },
-            { sensorId: 'leftThigh', rawAdc: input.s5 },
-            { sensorId: 'rightThigh', rawAdc: input.s6 },
-            { sensorId: 'frontEdge', rawAdc: input.s3 },
+            { sensorId: 'leftKnee', rawAdc: input.s4 },
+            { sensorId: 'leftMid', rawAdc: input.s6 },
+            { sensorId: 'leftIschial', rawAdc: input.s2 },
+            { sensorId: 'rightIschial', rawAdc: input.s3 },
+            { sensorId: 'rightMid', rawAdc: input.s5 },
+            { sensorId: 'rightKnee', rawAdc: input.s1 },
           ],
         },
       });
@@ -358,15 +361,31 @@ export function createMqttCushionTransport(
 
       await new Promise<void>((resolve, reject) => {
         settledConnect = { resolve, reject };
-        const nextClient = connectClient(normalized.url, {
-          protocolVersion: 4,
-          clean: true,
-          connectTimeout: 5_000,
-          reconnectPeriod: 2_000,
-          keepalive: 30,
-          forceNativeWebSocket: true,
-          clientId: `youdiandongxi-${Math.random().toString(16).slice(2, 12)}`,
-        });
+        let nextClient: MqttClient;
+        try {
+          nextClient = connectClient(normalized.url, {
+            protocolVersion: 4,
+            clean: true,
+            connectTimeout: 5_000,
+            reconnectPeriod: 2_000,
+            keepalive: 30,
+            forceNativeWebSocket: true,
+            timerVariant: 'native',
+            createWebsocket: (url, protocols) =>
+              new WebSocket(url, protocols),
+            clientId: `youdiandongxi-${Math.random().toString(16).slice(2, 12)}`,
+          });
+        } catch (error) {
+          const connectionError =
+            error instanceof Error ? error : new Error(String(error));
+          handlers.onConnection({
+            state: 'error',
+            error: { code: 'CONNECTION_FAILED' },
+          });
+          settledConnect = undefined;
+          reject(connectionError);
+          return;
+        }
         client = nextClient;
 
         nextClient.on('connect', () => {

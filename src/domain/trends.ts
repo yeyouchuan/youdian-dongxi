@@ -3,10 +3,17 @@ import {
   DayReport,
   ReportTrendPoint,
   ReportTrendSummary,
+  ScoreConfidence,
   TrendRangeDays,
 } from '@/domain/types';
 
-export type HeatmapTone = 'missing' | 'risk' | 'watch' | 'good' | 'great';
+export type HeatmapTone =
+  | 'missing'
+  | 'preliminary'
+  | 'risk'
+  | 'watch'
+  | 'good'
+  | 'great';
 
 function average(values: number[]) {
   if (values.length === 0) return null;
@@ -19,6 +26,7 @@ function pointForDate(date: string, report?: DayReport): ReportTrendPoint {
       date,
       hasData: false,
       score: null,
+      confidence: null,
       uprightPercentage: null,
       longestSitMinutes: null,
       standCount: null,
@@ -29,14 +37,19 @@ function pointForDate(date: string, report?: DayReport): ReportTrendPoint {
     date,
     hasData: true,
     score: report.score.value,
+    confidence: report.score.confidence,
     uprightPercentage: report.stats.uprightPercentage,
     longestSitMinutes: report.stats.longestSitMinutes,
-    standCount: report.stats.standCount,
+    standCount: report.stats.validBreakCount,
   };
 }
 
 function averageScore(reports: DayReport[]) {
-  return average(reports.map((report) => report.score.value));
+  return average(
+    reports
+      .map((report) => report.score.value)
+      .filter((value): value is number => value !== null),
+  );
 }
 
 export function buildReportTrendSummary(
@@ -53,8 +66,18 @@ export function buildReportTrendSummary(
   const currentReports = points
     .map((point) => reportByDate.get(point.date))
     .filter((report): report is DayReport => Boolean(report));
-  const currentAverageScore = averageScore(currentReports);
-  const previousAverageScore = averageScore(previousReports);
+  const stableReports = currentReports.filter(
+    (report) =>
+      report.score.confidence === 'stable' &&
+      report.score.value !== null,
+  );
+  const stablePreviousReports = previousReports.filter(
+    (report) =>
+      report.score.confidence === 'stable' &&
+      report.score.value !== null,
+  );
+  const currentAverageScore = averageScore(stableReports);
+  const previousAverageScore = averageScore(stablePreviousReports);
 
   return {
     rangeDays,
@@ -62,14 +85,20 @@ export function buildReportTrendSummary(
     endDate,
     points,
     dataDays: currentReports.length,
+    stableDays: stableReports.length,
+    preliminaryDays: currentReports.filter(
+      (report) => report.score.confidence === 'preliminary',
+    ).length,
     averageScore: currentAverageScore,
     averageUprightPercentage: average(
-      currentReports.map((report) => report.stats.uprightPercentage),
+      stableReports.map((report) => report.stats.uprightPercentage),
     ),
     averageLongestSitMinutes: average(
-      currentReports.map((report) => report.stats.longestSitMinutes),
+      stableReports.map((report) => report.stats.longestSitMinutes),
     ),
-    averageStandCount: average(currentReports.map((report) => report.stats.standCount)),
+    averageStandCount: average(
+      stableReports.map((report) => report.stats.validBreakCount),
+    ),
     comparison: {
       previousAverageScore,
       scoreDelta:
@@ -92,8 +121,12 @@ export function getTrendDateRanges(endDate: string, rangeDays: TrendRangeDays) {
   };
 }
 
-export function heatmapTone(score: number | null): HeatmapTone {
+export function heatmapTone(
+  score: number | null,
+  confidence: ScoreConfidence | null = null,
+): HeatmapTone {
   if (score === null) return 'missing';
+  if (confidence === 'preliminary') return 'preliminary';
   if (score < 70) return 'risk';
   if (score < 80) return 'watch';
   if (score < 90) return 'good';
@@ -102,7 +135,9 @@ export function heatmapTone(score: number | null): HeatmapTone {
 
 export function buildTrendAccessibilityLabel(summary: ReportTrendSummary) {
   if (summary.averageScore === null) {
-    return `最近${summary.rangeDays}天没有坐垫数据`;
+    return summary.dataDays === 0
+      ? `最近${summary.rangeDays}天没有坐垫数据`
+      : `最近${summary.rangeDays}天有坐垫数据，但没有达到稳定评分所需的60分钟`;
   }
 
   const comparison =
@@ -112,5 +147,5 @@ export function buildTrendAccessibilityLabel(summary: ReportTrendSummary) {
         ? '与上一周期持平'
         : `较上一周期${summary.comparison.scoreDelta > 0 ? '提高' : '下降'}${Math.abs(summary.comparison.scoreDelta)}分`;
 
-  return `最近${summary.rangeDays}天平均健康得分${summary.averageScore}分，${summary.dataDays}天有数据，${comparison}`;
+  return `最近${summary.rangeDays}天平均健康得分${summary.averageScore}分，${summary.stableDays}天为稳定评分，${comparison}`;
 }

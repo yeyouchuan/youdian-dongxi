@@ -28,16 +28,19 @@ const POSTURES = new Set([
   'upright',
   'leanLeft',
   'leanRight',
+  'forward',
+  'recline',
   'edge',
   'other',
 ]);
 
 const POSTURE_SENSOR_IDS = new Set([
+  'leftKnee',
+  'leftMid',
   'leftIschial',
   'rightIschial',
-  'leftThigh',
-  'rightThigh',
-  'frontEdge',
+  'rightMid',
+  'rightKnee',
 ]);
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -116,7 +119,7 @@ export function parseRealtimeEvent(
     }
   } else if (input.type === 'posture') {
     if (
-      input.payload.layoutId !== 'fsr5-v1' ||
+      input.payload.layoutId !== 'fsr6-v1' ||
       !POSTURES.has(input.payload.posture as string) ||
       !Array.isArray(input.payload.sensors) ||
       input.payload.sensors.length !== POSTURE_SENSOR_IDS.size

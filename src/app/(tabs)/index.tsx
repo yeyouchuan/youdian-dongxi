@@ -508,8 +508,16 @@ export default function ReportScreen() {
               {formatChineseMonthDay(selectedDate)} 星期{weekdayLabel(selectedDate)}
             </Text>
             <Text style={styles.coverageNote}>
-              记录覆盖 {report.stats.observedMinutes} 分钟 ·
-              仅统计 App 前台连接并实际收到数据的时段
+              有效在座 {report.stats.seatedMinutes} 分钟 · 采集覆盖{' '}
+              {report.stats.observedMinutes} 分钟 ·{' '}
+              {report.score.confidence === 'stable'
+                ? '稳定评分'
+                : report.score.confidence === 'preliminary'
+                  ? '初步评分'
+                  : '数据不足'}
+            </Text>
+            <Text style={styles.scoreDisclaimer}>
+              基于坐垫识别的姿态与离座习惯，仅供日常参考，不作为医疗诊断。
             </Text>
             <Text style={styles.mainDrag}>主要关注：{report.score.mainDrag}</Text>
             <View style={styles.statDivider} />
@@ -521,8 +529,8 @@ export default function ReportScreen() {
               />
               <View style={styles.verticalDivider} />
               <StatItem
-                label="起身活动"
-                value={`${report.stats.standCount}次`}
+                label="有效离座"
+                value={`${report.stats.validBreakCount}次`}
                 tone={Palette.emerald}
               />
               <View style={styles.verticalDivider} />
@@ -552,17 +560,18 @@ export default function ReportScreen() {
                     <Text style={styles.breakdownDetail}>{item.detail}</Text>
                   </View>
                   <Text
-                    style={[
-                      styles.breakdownDelta,
-                      item.delta < 0 ? styles.deltaNegative : styles.deltaBase,
-                    ]}>
-                    {item.delta > 0 ? item.delta : item.delta}
+                    style={styles.breakdownDelta}>
+                    {report.score.confidence === 'insufficient'
+                      ? '—'
+                      : `${item.points}/${item.maxPoints}`}
                   </Text>
                 </View>
               ))}
               <View style={styles.breakdownTotal}>
                 <Text style={styles.totalLabel}>记录时段得分</Text>
-                <Text style={styles.totalValue}>{report.score.value}</Text>
+                <Text style={styles.totalValue}>
+                  {report.score.value ?? '—'}
+                </Text>
               </View>
             </View>
           </SurfaceCard>
@@ -754,6 +763,13 @@ const styles = StyleSheet.create({
     lineHeight: 17,
     marginTop: 6,
   },
+  scoreDisclaimer: {
+    color: Palette.textMuted,
+    textAlign: 'center',
+    fontSize: 10,
+    lineHeight: 16,
+    marginTop: 4,
+  },
   mainDrag: {
     color: Palette.textMuted,
     textAlign: 'center',
@@ -857,14 +873,10 @@ const styles = StyleSheet.create({
     fontSize: 11,
   },
   breakdownDelta: {
-    fontSize: 14,
-    fontVariant: ['tabular-nums'],
-  },
-  deltaNegative: {
-    color: Palette.red,
-  },
-  deltaBase: {
     color: Palette.text,
+    fontSize: 14,
+    fontWeight: '700',
+    fontVariant: ['tabular-nums'],
   },
   breakdownTotal: {
     borderTopWidth: StyleSheet.hairlineWidth,

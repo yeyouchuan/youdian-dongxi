@@ -247,7 +247,11 @@ export default function TrendsScreen() {
                 color={Palette.textMuted}
               />
               <Text style={styles.completenessText}>
-                {summary.rangeDays} 天中有 {summary.dataDays} 天坐垫数据
+                {summary.rangeDays} 天中有 {summary.dataDays} 天数据 ·{' '}
+                {summary.stableDays} 天稳定评分
+                {summary.preliminaryDays > 0
+                  ? ` · ${summary.preliminaryDays} 天初步评分`
+                  : ''}
               </Text>
             </View>
           </SurfaceCard>
@@ -271,7 +275,7 @@ export default function TrendsScreen() {
                     ? '—'
                     : `${summary.averageUprightPercentage}%`
                 }
-                caption="有数据日期"
+                caption="仅稳定评分日期"
               />
               <Metric
                 label="平均最长久坐"
@@ -280,16 +284,16 @@ export default function TrendsScreen() {
                     ? '—'
                     : `${summary.averageLongestSitMinutes}分`
                 }
-                caption="建议低于 90 分"
+                caption="60 分钟后开始降分"
               />
               <Metric
-                label="平均起身"
+                label="平均有效离座"
                 value={
                   summary.averageStandCount === null
                     ? '—'
                     : `${summary.averageStandCount}次`
                 }
-                caption="每天活动次数"
+                caption="连续离座满 2 分钟"
               />
             </View>
           </SurfaceCard>
@@ -297,7 +301,7 @@ export default function TrendsScreen() {
           <SurfaceCard>
             <SectionTitle title="坐姿日历" icon="grid-outline" />
             <Text style={styles.sectionCopy}>
-              色块和数字共同表示每日健康得分；虚线格表示没有数据。
+              色块和数字表示每日健康得分；初步评分不进入周期平均。
             </Text>
             <TrendHeatmap
               points={summary.points}
@@ -320,7 +324,9 @@ export default function TrendsScreen() {
               </Text>
               <Text style={styles.selectedCopy}>
                 {selectedPoint?.hasData
-                  ? `健康得分 ${selectedPoint.score} 分 · 正坐 ${selectedPoint.uprightPercentage}%`
+                  ? selectedPoint.score === null
+                    ? `有效在座不足 15 分钟 · 暂不评分`
+                    : `${selectedPoint.confidence === 'preliminary' ? '初步' : '稳定'}健康得分 ${selectedPoint.score} 分 · 正坐 ${selectedPoint.uprightPercentage}%`
                   : '这一天没有坐垫数据，不生成评分。'}
               </Text>
             </View>

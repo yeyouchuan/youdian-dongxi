@@ -26,6 +26,7 @@ import {
   shouldNotifyElevatedLoad,
 } from '@/domain/recovery';
 import {
+  CushionPressureBalance,
   CushionRealtimeCapabilities,
   CushionRealtimeConnectionError,
   CushionRealtimeConnectionState,
@@ -71,6 +72,9 @@ interface RealtimeContextValue {
   connectionError: CushionRealtimeConnectionError | null;
   brokerUrl: string;
   postureRevision: number;
+  continuousSeatedSeconds: number | null;
+  currentPostureSeconds: number | null;
+  postureBalance: CushionPressureBalance | null;
   capabilities: CushionRealtimeCapabilities;
   latestByStream: Partial<
     Record<CushionRealtimeStreamType, CushionRealtimeEvent>
@@ -132,6 +136,60 @@ function latestEvents(
   return latest;
 }
 
+const PRESSURE_EMA_ALPHA = 0.4;
+
+function postureBalanceFromEvent(
+  event: Extract<CushionRealtimeEvent, { type: 'posture' }>,
+  previous: CushionPressureBalance | null,
+): CushionPressureBalance | null {
+  if (event.payload.posture === 'away') return null;
+  const values = Object.fromEntries(
+    event.payload.sensors.map((sensor) => [
+      sensor.sensorId,
+      sensor.rawAdc,
+    ]),
+  ) as Record<string, number>;
+  const left =
+    (values.leftKnee ?? 0) +
+    (values.leftMid ?? 0) +
+    (values.leftIschial ?? 0);
+  const right =
+    (values.rightKnee ?? 0) +
+    (values.rightMid ?? 0) +
+    (values.rightIschial ?? 0);
+  const ischial =
+    (values.leftIschial ?? 0) + (values.rightIschial ?? 0);
+  const leg =
+    (values.leftKnee ?? 0) +
+    (values.leftMid ?? 0) +
+    (values.rightMid ?? 0) +
+    (values.rightKnee ?? 0);
+  const sideTotal = left + right;
+  const depthTotal = ischial + leg;
+  if (sideTotal <= 0 || depthTotal <= 0) return null;
+
+  const smooth = (current: number, prior?: number) =>
+    prior === undefined
+      ? current
+      : prior + PRESSURE_EMA_ALPHA * (current - prior);
+  const leftPercentage = Math.round(
+    smooth((left / sideTotal) * 100, previous?.leftPercentage),
+  );
+  const ischialPercentage = Math.round(
+    smooth(
+      (ischial / depthTotal) * 100,
+      previous?.ischialPercentage,
+    ),
+  );
+  return {
+    leftPercentage,
+    rightPercentage: 100 - leftPercentage,
+    ischialPercentage,
+    legPercentage: 100 - ischialPercentage,
+    capturedAt: event.capturedAt,
+  };
+}
+
 export function RealtimeProvider({ children }: PropsWithChildren) {
   const { refreshHrv, samples } = useHealth();
   const postureSegmentsRef = useRef<RealtimePostureSegment[]>([]);
@@ -145,6 +203,7 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
   const mountedRef = useRef(true);
   const sessionRequestedRef = useRef(false);
   const resumeSessionRef = useRef(false);
+  const lifecycleDisconnectRef = useRef<Promise<void> | null>(null);
   const connectingRef = useRef(false);
   const connectionStateRef = useRef<CushionRealtimeConnectionState>(
     healthDataService.cushionRealtime.getConnectionState(),
@@ -164,6 +223,14 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
     );
   const [brokerUrl, setBrokerUrl] = useState(DEFAULT_CUSHION_MQTT_URL);
   const brokerUrlRef = useRef(DEFAULT_CUSHION_MQTT_URL);
+  const [continuousSeatedSince, setContinuousSeatedSince] = useState<
+    string | null
+  >(null);
+  const [currentPostureSince, setCurrentPostureSince] = useState<
+    string | null
+  >(null);
+  const [postureBalance, setPostureBalance] =
+    useState<CushionPressureBalance | null>(null);
   const [postureRevision, setPostureRevision] = useState(0);
   const [capabilities, setCapabilities] =
     useState<CushionRealtimeCapabilities>(
@@ -309,9 +376,24 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
         }
       }
       if (event.type === 'posture') {
+        setPostureBalance((current) =>
+          postureBalanceFromEvent(event, current),
+        );
+        setContinuousSeatedSince((current) => {
+          if (event.payload.posture === 'away') return null;
+          return current ?? event.capturedAt;
+        });
         const previousSegments = postureSegmentsRef.current;
         const nextSegments = appendPostureEvent(previousSegments, event);
         postureSegmentsRef.current = nextSegments;
+        const currentSegment = nextSegments.at(-1);
+        setCurrentPostureSince(
+          currentSegment &&
+            currentSegment.posture !== 'away' &&
+            currentSegment.posture !== 'unknown'
+            ? currentSegment.startAt
+            : null,
+        );
         persistPostureProgress(previousSegments, nextSegments);
       }
       setCapabilities(healthDataService.cushionRealtime.getCapabilities());
@@ -342,6 +424,24 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
     () => getRadarFrameStatus(radarDiagnostics, now),
     [now, radarDiagnostics],
   );
+  const continuousSeatedSeconds = useMemo(() => {
+    if (!continuousSeatedSince) return null;
+    return Math.max(
+      0,
+      Math.floor(
+        (now.getTime() - Date.parse(continuousSeatedSince)) / 1_000,
+      ),
+    );
+  }, [continuousSeatedSince, now]);
+  const currentPostureSeconds = useMemo(() => {
+    if (!currentPostureSince) return null;
+    return Math.max(
+      0,
+      Math.floor(
+        (now.getTime() - Date.parse(currentPostureSince)) / 1_000,
+      ),
+    );
+  }, [currentPostureSince, now]);
   const physiologyWindow = useMemo(
     () => buildPhysiologyWindow(events, now),
     [events, now],
@@ -569,34 +669,51 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
       if (state === 'active') {
         if (resumeSessionRef.current && sessionRequestedRef.current) {
           resumeSessionRef.current = false;
-          void connectSource().catch(() => undefined);
+          const pendingDisconnect = lifecycleDisconnectRef.current;
+          void (async () => {
+            await pendingDisconnect;
+            if (sessionRequestedRef.current) {
+              await connectSource();
+            }
+          })().catch(() => undefined);
         }
         return;
       }
-      if (
-        sessionRequestedRef.current &&
-        !resumeSessionRef.current &&
-        connectionStateRef.current !== 'disconnected'
-      ) {
-        resumeSessionRef.current = true;
-        void flushActivePostureSegment()
-          .catch(() =>
-            console.warn('[realtime-store] POSTURE_SEGMENT_FLUSH_FAILED'),
-          )
-          .finally(() =>
-            healthDataService.cushionRealtime.disconnect().catch(() => undefined),
-          );
-      }
+      if (state !== 'background') return;
+      if (!sessionRequestedRef.current || resumeSessionRef.current) return;
+
+      resumeSessionRef.current = true;
+      if (connectionStateRef.current === 'disconnected') return;
+
+      const pendingDisconnect = (async () => {
+        await flushActivePostureSegment().catch(() =>
+          console.warn('[realtime-store] POSTURE_SEGMENT_FLUSH_FAILED'),
+        );
+        await healthDataService.cushionRealtime
+          .disconnect()
+          .catch(() => undefined);
+      })();
+      lifecycleDisconnectRef.current = pendingDisconnect;
+      void pendingDisconnect.finally(() => {
+        if (lifecycleDisconnectRef.current === pendingDisconnect) {
+          lifecycleDisconnectRef.current = null;
+        }
+      });
     });
     return () => {
       subscription.remove();
+    };
+  }, [connectSource, flushActivePostureSegment]);
+
+  useEffect(() => {
+    return () => {
       if (sessionRequestedRef.current) {
         void flushActivePostureSegment().finally(() =>
           healthDataService.cushionRealtime.disconnect().catch(() => undefined),
         );
       }
     };
-  }, [connectSource, flushActivePostureSegment]);
+  }, [flushActivePostureSegment]);
 
   const ingest = useCallback((event: unknown) => {
     return healthDataService.cushionRealtime.ingest(event);
@@ -610,6 +727,9 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
     setEvents([]);
     setPressureFeatures([]);
     setStoredWindows([]);
+    setContinuousSeatedSince(null);
+    setCurrentPostureSince(null);
+    setPostureBalance(null);
     postureSegmentsRef.current = [];
     lastPersistedMinuteRef.current = undefined;
     lastPosturePersistedMinuteRef.current = undefined;
@@ -638,6 +758,9 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
       connectionError,
       brokerUrl,
       postureRevision,
+      continuousSeatedSeconds,
+      currentPostureSeconds,
+      postureBalance,
       capabilities,
       latestByStream,
       streamStatuses,
@@ -664,6 +787,8 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
       connect,
       connectionError,
       connectionState,
+      continuousSeatedSeconds,
+      currentPostureSeconds,
       disconnect,
       importResult,
       ingest,
@@ -672,6 +797,7 @@ export function RealtimeProvider({ children }: PropsWithChildren) {
       notificationsEnabled,
       physiologyWindow,
       pressureFeature,
+      postureBalance,
       postureRevision,
       radarDiagnostics,
       radarFrameStatus,

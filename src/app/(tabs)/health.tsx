@@ -1,5 +1,5 @@
 import { Ionicons } from '@expo/vector-icons';
-import { Href, Link } from 'expo-router';
+import { Href, Link, useRouter } from 'expo-router';
 import { useMemo } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 
@@ -10,10 +10,6 @@ import { SurfaceCard } from '@/components/surface-card';
 import { Palette, Radius, Spacing } from '@/constants/theme';
 import { buildLatestHealthMetrics } from '@/domain/health-presentation';
 import { POSTURE_LABELS } from '@/domain/report';
-import {
-  CushionRealtimeConnectionState,
-  RadarFrameState,
-} from '@/domain/realtime-types';
 import { HealthKitSyncState } from '@/domain/types';
 import { HEALTH_TYPES } from '@/services/apple-health-adapter';
 import { useHealth } from '@/state/health-context';
@@ -54,29 +50,15 @@ function qualityLabel(value?: number) {
   return `质量偏低 ${Math.round(value * 100)}%`;
 }
 
-function radarStatusPresentation(
-  connectionState: CushionRealtimeConnectionState,
-  frameState: RadarFrameState,
-) {
-  if (connectionState === 'connecting') {
-    return { label: '等待 MQTT 连接', color: Palette.textMuted };
-  }
-  if (connectionState === 'reconnecting') {
-    return { label: 'MQTT 重连中', color: Palette.amber };
-  }
-  if (connectionState !== 'connected') {
-    return { label: '尚未连接雷达', color: Palette.textMuted };
-  }
-  if (frameState === 'live') {
-    return { label: '雷达实时', color: Palette.emerald };
-  }
-  if (frameState === 'cached') {
-    return { label: '缓存保活', color: Palette.amber };
-  }
-  if (frameState === 'stale') {
-    return { label: '雷达已中断', color: Palette.red };
-  }
-  return { label: '等待雷达数据', color: Palette.textMuted };
+function formatContinuousSeated(seconds: number) {
+  const hours = Math.floor(seconds / 3_600);
+  const minutes = Math.floor((seconds % 3_600) / 60);
+  const remainingSeconds = seconds % 60;
+  const minuteText = String(minutes).padStart(2, '0');
+  const secondText = String(remainingSeconds).padStart(2, '0');
+  return hours > 0
+    ? `${String(hours).padStart(2, '0')}:${minuteText}:${secondText}`
+    : `${minuteText}:${secondText}`;
 }
 
 function SyncRow({ state }: { state: HealthKitSyncState }) {
@@ -107,6 +89,7 @@ function SyncRow({ state }: { state: HealthKitSyncState }) {
 }
 
 export default function HealthScreen() {
+  const router = useRouter();
   const health = useHealth();
   const realtime = useRealtime();
   const isBusy = health.status === 'connecting' || health.status === 'syncing';
@@ -149,21 +132,41 @@ export default function HealthScreen() {
     realtime.latestByStream.posture?.type === 'posture'
       ? realtime.latestByStream.posture
       : undefined;
-  const radarPresentation = radarStatusPresentation(
-    realtime.connectionState,
-    realtime.radarFrameStatus.state,
-  );
-  const radarDistance = realtime.radarDiagnostics.distanceCm;
-  const distanceInRange =
-    radarDistance !== undefined &&
-    radarDistance >= 60 &&
-    radarDistance <= 120;
-  const radarDistanceCopy =
-    radarDistance === undefined
-      ? '目标距离待检测'
-      : `${radarDistance.toFixed(1)} cm · ${
-          distanceInRange ? '距离合适' : '请调整座位距离'
-        }`;
+  const continuousSeatedSeconds = realtime.continuousSeatedSeconds;
+  const seatedPresentation =
+    continuousSeatedSeconds === null
+      ? {
+          title: '连续在座',
+          copy:
+            postureEvent?.payload.posture === 'away'
+              ? '当前已离座 · 再次入座后开始计时'
+              : '等待坐姿数据',
+          tone: Palette.textMuted,
+        }
+      : continuousSeatedSeconds >= 90 * 60
+        ? {
+            title: '久坐时间较长',
+            copy: `${formatContinuousSeated(continuousSeatedSeconds)} · 建议尽快起身活动`,
+            tone: Palette.red,
+          }
+        : continuousSeatedSeconds >= 60 * 60
+          ? {
+              title: '已连续久坐',
+              copy: `${formatContinuousSeated(continuousSeatedSeconds)} · 建议现在起身活动`,
+              tone: Palette.amber,
+            }
+          : continuousSeatedSeconds >= 45 * 60
+            ? {
+                title: '可以准备活动',
+                copy: `${formatContinuousSeated(continuousSeatedSeconds)} · 60 分钟后影响得分`,
+                tone: Palette.teal,
+              }
+            : {
+                title: '连续在座',
+                copy: `${formatContinuousSeated(continuousSeatedSeconds)} · 45 分钟时提醒`,
+                tone: Palette.emerald,
+              };
+  const seatedTone = seatedPresentation.tone;
 
   const statusPresentation = {
     loading: {
@@ -252,34 +255,28 @@ export default function HealthScreen() {
         <Text style={styles.sectionCopy}>
           BPM 与呼吸率来自当前坐垫会话；不会据此计算 HRV。
         </Text>
-        <View style={styles.radarStatusRow}>
+        <View style={styles.seatedStatusRow}>
           <View
             style={[
-              styles.radarStatusIcon,
-              { backgroundColor: `${radarPresentation.color}1A` },
+              styles.seatedStatusIcon,
+              { backgroundColor: `${seatedTone}1A` },
             ]}>
             <Ionicons
-              name="radio-outline"
+              name="timer-outline"
               size={20}
-              color={radarPresentation.color}
+              color={seatedTone}
             />
           </View>
-          <View style={styles.radarStatusText}>
+          <View style={styles.seatedStatusText}>
             <Text
               style={[
-                styles.radarStatusTitle,
-                { color: radarPresentation.color },
+                styles.seatedStatusTitle,
+                { color: seatedTone },
               ]}>
-              {radarPresentation.label}
+              {seatedPresentation.title}
             </Text>
-            <Text
-              style={[
-                styles.radarStatusCopy,
-                radarDistance !== undefined &&
-                  !distanceInRange &&
-                  styles.distanceWarning,
-              ]}>
-              {radarDistanceCopy}
+            <Text style={styles.seatedStatusCopy}>
+              {seatedPresentation.copy}
             </Text>
           </View>
         </View>
@@ -349,7 +346,12 @@ export default function HealthScreen() {
                     styles.interrupted,
                 ]}>
                 {postureEvent
-                  ? `${POSTURE_LABELS[postureEvent.payload.posture]} · ${
+                  ? `${POSTURE_LABELS[postureEvent.payload.posture]}${
+                      typeof realtime.currentPostureSeconds !== 'number' ||
+                      !Number.isFinite(realtime.currentPostureSeconds)
+                        ? ''
+                        : ` · 已持续 ${formatContinuousSeated(realtime.currentPostureSeconds)}`
+                    } · ${
                       realtime.streamStatuses.posture.state === 'stale'
                         ? '已中断'
                         : '实时'
@@ -357,6 +359,65 @@ export default function HealthScreen() {
                   : '等待坐垫姿态数据'}
               </Text>
             </View>
+          </View>
+        ) : null}
+        {realtime.postureBalance ? (
+          <View style={styles.balanceCard}>
+            <View style={styles.balanceHeader}>
+              <Text style={styles.balanceTitle}>实时承重分布</Text>
+              <Text style={styles.balanceMeta}>相对值 · 已平滑</Text>
+            </View>
+            <View style={styles.balanceMetric}>
+              <View style={styles.balanceLabels}>
+                <Text style={styles.balanceLabel}>
+                  左 {realtime.postureBalance.leftPercentage}%
+                </Text>
+                <Text style={styles.balanceLabel}>
+                  右 {realtime.postureBalance.rightPercentage}%
+                </Text>
+              </View>
+              <View style={styles.balanceTrack}>
+                <View
+                  style={[
+                    styles.balanceLeft,
+                    { flex: realtime.postureBalance.leftPercentage },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.balanceRight,
+                    { flex: realtime.postureBalance.rightPercentage },
+                  ]}
+                />
+              </View>
+            </View>
+            <View style={styles.balanceMetric}>
+              <View style={styles.balanceLabels}>
+                <Text style={styles.balanceLabel}>
+                  坐骨 {realtime.postureBalance.ischialPercentage}%
+                </Text>
+                <Text style={styles.balanceLabel}>
+                  腿部 {realtime.postureBalance.legPercentage}%
+                </Text>
+              </View>
+              <View style={styles.balanceTrack}>
+                <View
+                  style={[
+                    styles.balanceIschial,
+                    { flex: realtime.postureBalance.ischialPercentage },
+                  ]}
+                />
+                <View
+                  style={[
+                    styles.balanceLeg,
+                    { flex: realtime.postureBalance.legPercentage },
+                  ]}
+                />
+              </View>
+            </View>
+            <Text style={styles.balanceFootnote}>
+              六路 ADC 仅用于观察相对分布，不代表重量或医学判断。
+            </Text>
           </View>
         ) : null}
         {realtime.capabilities.pressure ? (
@@ -413,26 +474,27 @@ export default function HealthScreen() {
               : '连接坐垫数据源'}
           </Text>
         </Pressable>
-        <Link href={'/cushion-diagnostics' as Href} asChild>
-          <Pressable
-            accessibilityRole="button"
-            style={({ pressed }) => [
-              styles.detailsLink,
-              pressed && styles.pressed,
-            ]}>
-            <Ionicons
-              name="information-circle-outline"
-              size={18}
-              color={Palette.sky}
-            />
-            <Text style={styles.detailsLinkText}>查看连接详情</Text>
-            <Ionicons
-              name="chevron-forward"
-              size={15}
-              color={Palette.textMuted}
-            />
-          </Pressable>
-        </Link>
+        <Pressable
+          accessibilityRole="button"
+          onPress={() => router.push('/cushion-diagnostics')}
+          style={({ pressed }) => [
+            styles.detailsLink,
+            pressed && styles.pressed,
+          ]}>
+          <Ionicons
+            name="information-circle-outline"
+            size={18}
+            color={Palette.sky}
+          />
+          <Text style={styles.detailsLinkText} numberOfLines={1}>
+            查看连接详情
+          </Text>
+          <Ionicons
+            name="chevron-forward"
+            size={15}
+            color={Palette.textMuted}
+          />
+        </Pressable>
         {__DEV__ ? (
           <Link href={'/cushion-test' as Href} asChild>
             <Pressable
@@ -717,7 +779,7 @@ const styles = StyleSheet.create({
     gap: Spacing.md,
     marginTop: Spacing.lg,
   },
-  radarStatusRow: {
+  seatedStatusRow: {
     minHeight: 72,
     flexDirection: 'row',
     alignItems: 'center',
@@ -727,23 +789,22 @@ const styles = StyleSheet.create({
     padding: Spacing.md,
     marginTop: Spacing.lg,
   },
-  radarStatusIcon: {
+  seatedStatusIcon: {
     width: 42,
     height: 42,
     borderRadius: 21,
     alignItems: 'center',
     justifyContent: 'center',
   },
-  radarStatusText: { flex: 1 },
-  radarStatusTitle: { fontSize: 13, fontWeight: '800' },
-  radarStatusCopy: {
+  seatedStatusText: { flex: 1 },
+  seatedStatusTitle: { fontSize: 13, fontWeight: '800' },
+  seatedStatusCopy: {
     color: Palette.textSecondary,
     fontSize: 11,
     lineHeight: 17,
     marginTop: 3,
     fontVariant: ['tabular-nums'],
   },
-  distanceWarning: { color: Palette.amber, fontWeight: '700' },
   liveMetric: {
     flex: 1,
     minHeight: 142,
@@ -794,6 +855,54 @@ const styles = StyleSheet.create({
     fontSize: 10,
     lineHeight: 16,
     marginTop: 3,
+  },
+  balanceCard: {
+    borderRadius: Radius.md,
+    backgroundColor: Palette.surfaceRaised,
+    padding: Spacing.md,
+    marginTop: Spacing.md,
+    gap: Spacing.md,
+  },
+  balanceHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: Spacing.sm,
+  },
+  balanceTitle: {
+    color: Palette.text,
+    fontSize: 12,
+    fontWeight: '800',
+  },
+  balanceMeta: {
+    color: Palette.textMuted,
+    fontSize: 9,
+  },
+  balanceMetric: { gap: 6 },
+  balanceLabels: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+  },
+  balanceLabel: {
+    color: Palette.textSecondary,
+    fontSize: 10,
+    fontVariant: ['tabular-nums'],
+  },
+  balanceTrack: {
+    height: 8,
+    borderRadius: 4,
+    overflow: 'hidden',
+    flexDirection: 'row',
+    backgroundColor: Palette.surfaceMuted,
+  },
+  balanceLeft: { backgroundColor: Palette.sky },
+  balanceRight: { backgroundColor: Palette.purple },
+  balanceIschial: { backgroundColor: Palette.emerald },
+  balanceLeg: { backgroundColor: Palette.amber },
+  balanceFootnote: {
+    color: Palette.textMuted,
+    fontSize: 9,
+    lineHeight: 15,
   },
   sessionOnly: {
     color: Palette.textMuted,

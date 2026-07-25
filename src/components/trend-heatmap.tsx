@@ -12,6 +12,7 @@ const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日'];
 
 const TONE_STYLES: Record<HeatmapTone, { backgroundColor: string; color: string }> = {
   missing: { backgroundColor: Palette.surfaceMuted, color: Palette.textMuted },
+  preliminary: { backgroundColor: '#FFF2D6', color: '#8A5700' },
   risk: { backgroundColor: '#FFD7DE', color: '#9E1731' },
   watch: { backgroundColor: '#FFE8B8', color: '#7A4A00' },
   good: { backgroundColor: '#DDF3E4', color: '#176B35' },
@@ -54,7 +55,7 @@ export function TrendHeatmap({
         <View key={rowIndex} style={styles.row}>
           {row.map((point, columnIndex) => {
             if (!point) return <View key={`empty-${columnIndex}`} style={styles.cell} />;
-            const tone = heatmapTone(point.score);
+            const tone = heatmapTone(point.score, point.confidence);
             const toneStyle = TONE_STYLES[tone];
             const selected = point.date === selectedDate;
             return (
@@ -62,7 +63,11 @@ export function TrendHeatmap({
                 key={point.date}
                 accessibilityRole="button"
                 accessibilityLabel={`${formatChineseMonthDay(point.date)}，${
-                  point.score === null ? '无坐垫数据' : `健康得分${point.score}分`
+                  point.score === null
+                    ? point.hasData
+                      ? '数据不足'
+                      : '无坐垫数据'
+                    : `${point.confidence === 'preliminary' ? '初步' : '稳定'}健康得分${point.score}分`
                 }`}
                 accessibilityState={{ selected }}
                 onPress={() => onSelect(point.date)}
@@ -85,7 +90,9 @@ export function TrendHeatmap({
       <View style={styles.legend}>
         {[
           ['无数据', 'missing'],
-          ['需关注', 'watch'],
+          ['初步', 'preliminary'],
+          ['需关注', 'risk'],
+          ['待改善', 'watch'],
           ['良好', 'good'],
           ['优秀', 'great'],
         ].map(([label, tone]) => (
